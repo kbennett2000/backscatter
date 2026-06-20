@@ -33,6 +33,11 @@ def _put_volume(client: object, scan: datetime, *, site: str = "KFTG") -> str:
     return key
 
 
+def _put_raw(client: object, key: str) -> None:
+    """Put an arbitrary object (not a parseable volume) under the bucket."""
+    client.put_object(Bucket=s3.BUCKET, Key=key, Body=b"x")  # type: ignore[attr-defined]
+
+
 def _config(tmp_path: Path, site: str = "KFTG") -> Config:
     return Config(
         site=site,
@@ -65,6 +70,24 @@ def test_find_latest_midnight_fallback_to_yesterday(s3_client: object) -> None:
     assert found is not None
     _key, scan_time = found
     assert scan_time == yesterdays_newest
+
+
+def test_find_latest_ignores_non_volume_objects(s3_client: object) -> None:
+    # Non-_V06 objects share the prefix in the real bucket (MDM sidecars, tar-style
+    # keys). They carry *later* clock times than the real volume, so if the
+    # is_volume_key filter in list_volume_keys regressed, find_latest would pick one
+    # of them (or blow up parsing it) instead of the correct _V06.
+    now = datetime(2026, 6, 20, 12, 0, tzinfo=UTC)
+    real = datetime(2026, 6, 20, 11, 50, 0, tzinfo=UTC)
+    _put_volume(s3_client, real)
+    _put_raw(s3_client, "2026/06/20/KFTG/KFTG20260620_115500_V06_MDM")
+    _put_raw(s3_client, "2026/06/20/KFTG/KFTG20260620_120000.tar")
+
+    found = find_latest(s3_client, "KFTG", now)
+    assert found is not None
+    key, scan_time = found
+    assert scan_time == real
+    assert key.endswith("_V06")
 
 
 def test_find_latest_returns_none_when_empty(s3_client: object) -> None:
