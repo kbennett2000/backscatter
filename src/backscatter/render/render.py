@@ -20,7 +20,7 @@ from backscatter.decode.volume import REFLECTIVITY_FIELD, read_lowest_reflectivi
 from backscatter.ingest import naming
 from backscatter.render.colormap import dbz_to_rgba
 from backscatter.render.raster import rasterize
-from backscatter.sites.table import Site, load_sites
+from backscatter.sites.table import Site, site_by_icao
 
 
 @dataclass(frozen=True)
@@ -39,10 +39,10 @@ class RenderResult:
 
 
 def _lookup_site(icao: str) -> Site:
-    for site in load_sites():
-        if site.icao == icao:
-            return site
-    raise ValueError(f"site {icao!r} is not in the bundled NEXRAD table")
+    site = site_by_icao(icao)
+    if site is None:
+        raise ValueError(f"site {icao!r} is not in the bundled NEXRAD table")
+    return site
 
 
 def render_volume(

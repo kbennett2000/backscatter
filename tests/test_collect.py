@@ -10,7 +10,6 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from backscatter.collect import collect as collect_mod
 from backscatter.collect.collect import (
     CycleResult,
     CycleStatus,
@@ -20,6 +19,8 @@ from backscatter.collect.collect import (
 from backscatter.config import Config
 from backscatter.ingest import naming, s3
 from backscatter.render.render import RenderResult
+from backscatter.sites.select import rank_sites
+from backscatter.sites.table import site_by_icao
 from backscatter.store import db
 
 
@@ -31,12 +32,15 @@ def s3_client() -> Iterator[object]:
         yield client
 
 
-def _config(tmp_path: Path) -> Config:
+def _config(
+    tmp_path: Path, *, site: str = "KFTG", site_override: bool = False
+) -> Config:
     # Elizabeth, CO -> nearest KFTG, then KPUX (failover candidate).
     return Config(
         lat=39.3603,
         lon=-104.5969,
-        site="KFTG",
+        site=site,
+        site_override=site_override,
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "backscatter.db",
         poll_interval_s=0.0,
@@ -179,19 +183,104 @@ def test_render_failure_recorded_and_loop_continues(
     assert calls["n"] == 2
 
 
-def test_unexpected_cycle_error_does_not_kill_loop(
-    tmp_path: Path, s3_client: object, monkeypatch: pytest.MonkeyPatch
+class _FlakyDownloadClient:
+    """Wraps a moto S3 client and raises mid-download on the first get_object."""
+
+    def __init__(self, inner: object) -> None:
+        self._inner = inner
+        self.get_calls = 0
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._inner, name)  # delegate list/paginate/etc.
+
+    def get_object(self, **kwargs: object) -> object:
+        self.get_calls += 1
+        if self.get_calls == 1:
+            raise RuntimeError("network blip mid-download")
+        return self._inner.get_object(**kwargs)  # type: ignore[attr-defined]
+
+
+def test_pull_error_survives_and_next_cycle_runs(
+    tmp_path: Path, s3_client: object
 ) -> None:
+    # A genuine mid-pipeline raise (during the S3 download) on cycle 1 must not end
+    # the loop: a SUBSEQUENT cycle has to run and actually store + render.
     config = _config(tmp_path)
-    seen = {"n": 0}
+    _put_volume(s3_client, datetime(2026, 6, 19, 11, 50, tzinfo=UTC))
+    _put_volume(s3_client, datetime(2026, 6, 20, 11, 50, tzinfo=UTC))
+    nows = iter(
+        [
+            datetime(2026, 6, 19, 12, 0, tzinfo=UTC),  # cycle 1: download raises
+            datetime(2026, 6, 20, 12, 0, tzinfo=UTC),  # cycle 2: succeeds
+        ]
+    )
+    flaky = _FlakyDownloadClient(s3_client)
 
-    def flaky_cycle(*args: object, **kwargs: object) -> CycleResult:
-        seen["n"] += 1
-        if seen["n"] == 1:
-            raise RuntimeError("transient S3 blip")
-        return CycleResult(CycleStatus.NOTHING)
+    run_collect(
+        config,
+        now_fn=lambda: next(nows),
+        client=flaky,
+        render_fn=_stub_render(),
+        max_cycles=2,
+    )
 
-    monkeypatch.setattr(collect_mod, "collect_cycle", flaky_cycle)
-    # Should not raise despite the first cycle blowing up.
-    run_collect(config, client=s3_client, render_fn=_stub_render(), max_cycles=2)
-    assert seen["n"] == 2  # loop continued past the error
+    assert flaky.get_calls == 2  # both download attempts happened
+    conn = _open_db(config)
+    rows = {
+        r["scan_time"]: r["render_status"]
+        for r in conn.execute("SELECT scan_time, render_status FROM volumes")
+    }
+    # Cycle 1 blew up before recording; cycle 2 ran and rendered.
+    assert "2026-06-19T11:50:00+00:00" not in rows
+    assert rows["2026-06-20T11:50:00+00:00"] == "rendered"
+
+
+def test_no_candidate_logs_warning(
+    tmp_path: Path, s3_client: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Empty bucket: no candidate produces a volume -> NOTHING, and it must WARN
+    # (never silently collect nothing forever).
+    config = _config(tmp_path)
+    conn = _open_db(config)
+    with caplog.at_level("WARNING", logger="backscatter.collect"):
+        res = collect_cycle(
+            config, conn, now=datetime(2026, 6, 20, 12, 0, tzinfo=UTC),
+            client=s3_client, render_fn=_stub_render(),
+        )
+    assert res.status is CycleStatus.NOTHING
+    assert any(r.levelname == "WARNING" for r in caplog.records)
+
+
+def test_override_pins_primary_site(tmp_path: Path, s3_client: object) -> None:
+    # config lat/lon is Elizabeth (nearest KFTG), but SITE is pinned to KTLX.
+    config = _config(tmp_path, site="KTLX", site_override=True)
+    _put_volume(s3_client, datetime(2026, 6, 20, 11, 50, tzinfo=UTC), site="KTLX")
+    conn = _open_db(config)
+
+    res = collect_cycle(
+        config, conn, now=datetime(2026, 6, 20, 12, 0, tzinfo=UTC),
+        client=s3_client, render_fn=_stub_render(),
+    )
+    # KTLX isn't in Elizabeth's top candidates — collecting it proves we ranked
+    # from the pinned site, not config lat/lon.
+    assert res.status is CycleStatus.RENDERED
+    assert res.site == "KTLX"
+
+
+def test_override_failover_walks_pinned_neighbors(
+    tmp_path: Path, s3_client: object
+) -> None:
+    config = _config(tmp_path, site="KTLX", site_override=True)
+    ktlx = site_by_icao("KTLX")
+    assert ktlx is not None
+    neighbor = rank_sites(ktlx.lat, ktlx.lon)[1].site.icao  # KTLX's nearest neighbor
+    # Pinned site has no data; its nearest neighbor does.
+    _put_volume(s3_client, datetime(2026, 6, 20, 11, 50, tzinfo=UTC), site=neighbor)
+    conn = _open_db(config)
+
+    res = collect_cycle(
+        config, conn, now=datetime(2026, 6, 20, 12, 0, tzinfo=UTC),
+        client=s3_client, render_fn=_stub_render(),
+    )
+    assert res.status is CycleStatus.RENDERED
+    assert res.site == neighbor

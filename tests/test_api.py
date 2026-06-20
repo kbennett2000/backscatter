@@ -22,6 +22,7 @@ def _config(tmp_path: Path) -> Config:
         lat=39.3603,
         lon=-104.5969,
         site="KFTG",
+        site_override=False,
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "backscatter.db",
         poll_interval_s=60.0,

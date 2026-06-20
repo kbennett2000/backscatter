@@ -34,6 +34,9 @@ class Config:
     lat: float
     lon: float
     site: str
+    # Whether `site` was pinned explicitly (CLI/env) vs resolved from lat/lon.
+    # collect uses this to rank failover from the pinned site, not config lat/lon.
+    site_override: bool
     data_dir: Path
     db_path: Path
     poll_interval_s: float
@@ -80,6 +83,7 @@ def load_config(
         lat=resolved_lat,
         lon=resolved_lon,
         site=resolved_site,
+        site_override=explicit_site is not None,
         data_dir=data_dir,
         db_path=db_path,
         poll_interval_s=poll_interval_s,

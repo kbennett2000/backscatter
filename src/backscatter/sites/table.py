@@ -25,6 +25,15 @@ class Site:
     lon: float
 
 
+def site_by_icao(icao: str) -> Site | None:
+    """Return the bundled site with this ICAO (case-insensitive), or None."""
+    target = icao.strip().upper()
+    for site in load_sites():
+        if site.icao == target:
+            return site
+    return None
+
+
 @cache
 def load_sites() -> tuple[Site, ...]:
     """Return all bundled sites, read once and cached."""

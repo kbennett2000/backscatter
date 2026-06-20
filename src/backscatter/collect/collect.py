@@ -23,7 +23,8 @@ from backscatter.ingest import s3
 from backscatter.ingest.pull import PullResult, PullStatus, fetch_volume
 from backscatter.ingest.s3 import S3Client
 from backscatter.render.render import RenderResult, render_volume
-from backscatter.sites.select import rank_sites
+from backscatter.sites.select import RankedSite, rank_sites
+from backscatter.sites.table import site_by_icao
 from backscatter.store import db
 
 log = logging.getLogger("backscatter.collect")
@@ -57,6 +58,22 @@ def _ts(dt: datetime | None) -> str:
     return f"{dt:%Y-%m-%d %H:%M:%S}Z" if dt else "?"
 
 
+def _candidate_sites(config: Config) -> list[RankedSite]:
+    """Failover candidates, nearest first.
+
+    With an explicit site override, rank from the **pinned** site's coordinates so it
+    is the primary and failover walks its neighbors (SITE means the same thing in
+    `pull` and `collect`). Otherwise rank from the configured lat/lon.
+    """
+    if config.site_override:
+        pinned = site_by_icao(config.site)
+        if pinned is not None:
+            return rank_sites(pinned.lat, pinned.lon)[:FAILOVER_CANDIDATES]
+        # Unknown override ICAO: fall back to geographic ranking rather than fail.
+        log.warning("override site %s not in table; ranking from lat/lon", config.site)
+    return rank_sites(config.lat, config.lon)[:FAILOVER_CANDIDATES]
+
+
 def collect_cycle(
     config: Config,
     conn: sqlite3.Connection,
@@ -66,7 +83,7 @@ def collect_cycle(
     render_fn: RenderFn = render_volume,
 ) -> CycleResult:
     """Run one pull→render→index cycle, with failover across nearby sites."""
-    candidates = rank_sites(config.lat, config.lon)[:FAILOVER_CANDIDATES]
+    candidates = _candidate_sites(config)
     for rank, ranked in enumerate(candidates):
         site = ranked.site.icao
         result = fetch_volume(config, site, conn, now=now, client=client)
