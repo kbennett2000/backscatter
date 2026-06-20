@@ -9,11 +9,18 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from backscatter.store import db
 
 RENDERS_SUBDIR = "renders"
+
+# How many frames /api/frames returns by default, and the hard ceiling. The
+# timeline window is bounded by "most recent N" rather than handing back an
+# unbounded archive; pagination can come later if a deeper window is needed.
+DEFAULT_FRAMES_LIMIT = 500
+MAX_FRAMES_LIMIT = 2000
 
 
 @dataclass(frozen=True)
@@ -66,3 +73,16 @@ def latest_frame(conn: sqlite3.Connection) -> FrameMeta | None:
     """Return the newest rendered frame from the index, or None."""
     row = db.latest_rendered_frame(conn)
     return _frame_from_row(row) if row is not None else None
+
+
+def frames_in_range(
+    conn: sqlite3.Connection,
+    *,
+    site: str,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    limit: int = DEFAULT_FRAMES_LIMIT,
+) -> list[FrameMeta]:
+    """Rendered frames for a site over a time range, oldest-first (for playback)."""
+    rows = db.rendered_frames(conn, site=site, start=start, end=end, limit=limit)
+    return [_frame_from_row(row) for row in rows]

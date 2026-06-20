@@ -36,9 +36,10 @@ def _seed_frame(
     volume: str = "KFTG20260620_215107_V06",
     scan_time: str = "2026-06-20T21:51:07+00:00",
     bounds: tuple[float, float, float, float] = BOUNDS,
+    status: str = "rendered",  # rendered | pending | failed
     write_png: bool = False,
 ) -> bytes:
-    """Index a volume + render, optionally writing the PNG file under data/renders."""
+    """Index a volume (+render), optionally writing the PNG file under data/renders."""
     scan = datetime.fromisoformat(scan_time)
     conn = db.connect(config.db_path)
     db.init_db(conn)
@@ -47,10 +48,13 @@ def _seed_frame(
         path=Path(volume), size_bytes=1, downloaded_at=scan,
     )
     image_path = f"{site}/{volume}.png"
-    db.record_render(
-        conn, site=site, scan_time=scan, image_path=image_path,
-        elevation_deg=0.483, width=2, height=2, bounds=bounds, rendered_at=scan,
-    )
+    if status == "rendered":
+        db.record_render(
+            conn, site=site, scan_time=scan, image_path=image_path,
+            elevation_deg=0.483, width=2, height=2, bounds=bounds, rendered_at=scan,
+        )
+    elif status == "failed":
+        db.mark_render_failed(conn, site, scan)
     conn.close()
 
     png_bytes = b""
@@ -127,3 +131,87 @@ def test_index_served_as_html(tmp_path: Path) -> None:
     resp = client.get("/")
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/html")
+
+
+# --- /api/frames (timeline) --------------------------------------------------
+
+
+def _seed_three_rendered(config: Config) -> list[str]:
+    times = [
+        "2026-06-20T20:00:00+00:00",
+        "2026-06-20T21:00:00+00:00",
+        "2026-06-20T22:00:00+00:00",
+    ]
+    for t in times:
+        _seed_frame(config, volume=f"KFTG20260620_{t[11:13]}0000_V06", scan_time=t)
+    return times
+
+
+def test_frames_only_rendered_ascending(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    times = _seed_three_rendered(config)
+    # A pending and a failed frame must be excluded.
+    _seed_frame(config, volume="KFTG20260620_230000_V06",
+                scan_time="2026-06-20T23:00:00+00:00", status="pending")
+    _seed_frame(config, volume="KFTG20260620_233000_V06",
+                scan_time="2026-06-20T23:30:00+00:00", status="failed")
+
+    body = TestClient(create_app(config)).get("/api/frames").json()
+    assert body["site"] == "KFTG"
+    assert body["count"] == 3
+    assert [f["scan_time"] for f in body["frames"]] == times
+
+
+def test_frames_range_filter(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed_three_rendered(config)
+    client = TestClient(create_app(config))
+
+    # Query timestamps use Z form ('+' would decode to a space in a URL).
+    after = client.get("/api/frames?start=2026-06-20T21:00:00Z").json()
+    assert [f["scan_time"] for f in after["frames"]] == [
+        "2026-06-20T21:00:00+00:00", "2026-06-20T22:00:00+00:00",
+    ]
+    before = client.get("/api/frames?end=2026-06-20T21:00:00Z").json()
+    assert [f["scan_time"] for f in before["frames"]] == [
+        "2026-06-20T20:00:00+00:00", "2026-06-20T21:00:00+00:00",
+    ]
+
+
+def test_frames_empty_range_is_ok(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed_three_rendered(config)
+    resp = TestClient(create_app(config)).get(
+        "/api/frames?start=2027-01-01T00:00:00Z"
+    )
+    assert resp.status_code == 200
+    assert resp.json()["frames"] == []
+
+
+def test_frames_limit_keeps_most_recent(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed_three_rendered(config)
+    body = TestClient(create_app(config)).get("/api/frames?limit=2").json()
+    assert body["limit"] == 2
+    # Most recent two, still ascending.
+    assert [f["scan_time"] for f in body["frames"]] == [
+        "2026-06-20T21:00:00+00:00", "2026-06-20T22:00:00+00:00",
+    ]
+
+
+def test_frames_site_filter_and_default(tmp_path: Path) -> None:
+    config = _config(tmp_path)  # config.site == KFTG
+    _seed_frame(config, scan_time="2026-06-20T21:00:00+00:00")
+    _seed_frame(config, site="KPUX", volume="KPUX20260620_210000_V06",
+                scan_time="2026-06-20T21:00:00+00:00")
+    client = TestClient(create_app(config))
+
+    default = client.get("/api/frames").json()  # defaults to config.site
+    assert {f["site"] for f in default["frames"]} == {"KFTG"}
+    pux = client.get("/api/frames?site=KPUX").json()
+    assert {f["site"] for f in pux["frames"]} == {"KPUX"}
+
+
+def test_frames_bad_timestamp_is_400(tmp_path: Path) -> None:
+    resp = TestClient(create_app(_config(tmp_path))).get("/api/frames?start=nope")
+    assert resp.status_code == 400

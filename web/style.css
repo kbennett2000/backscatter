@@ -32,3 +32,52 @@ body {
   font-size: 11px;
   max-width: 60ch;
 }
+
+#timeline {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 32px;
+  width: min(900px, 92vw);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font: 12px/1.4 system-ui, sans-serif;
+}
+
+#timeline[hidden] {
+  display: none;
+}
+
+#timeline #scrubber {
+  flex: 1;
+  cursor: pointer;
+}
+
+#timeline #play {
+  width: 34px;
+  height: 28px;
+  flex: none;
+  background: #fff;
+  color: #000;
+  border: 0;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#timeline #frametime {
+  flex: none;
+  min-width: 12ch;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+#timeline #speed {
+  flex: none;
+}

@@ -14,6 +14,17 @@
   <body>
     <div id="map"></div>
     <div id="readout">loading…</div>
+    <div id="timeline" hidden>
+      <button id="play" type="button" aria-label="Play/pause">▶</button>
+      <input id="scrubber" type="range" min="0" max="0" value="0" step="1" />
+      <span id="frametime">—</span>
+      <select id="speed" aria-label="Playback speed">
+        <option value="1000">1 fps</option>
+        <option value="500" selected>2 fps</option>
+        <option value="250">4 fps</option>
+        <option value="125">8 fps</option>
+      </select>
+    </div>
     <div id="credit">
       Radar: NOAA NEXRAD Level 2 (not endorsed by NOAA/NWS) ·
       Basemap © OpenMapTiles © OpenStreetMap contributors via OpenFreeMap

@@ -57,8 +57,14 @@ uv run backscatter serve             # serve the map UI at http://<host>:8000
 ```
 
 `serve` opens a MapLibre map (keyless OpenFreeMap basemap) centered on your
-configured location with the latest rendered frame overlaid. See
-[`docs/ROADMAP.md`](docs/ROADMAP.md) for build status.
+configured location, with a **timeline scrubber + play/pause** over every frame
+`collect` has accumulated — scrub or loop across the whole archive. Run
+`backscatter collect` for a while first to build up frames (one every ~5 min).
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for build status.
+
+The timeline is driven by `GET /api/frames?site=&start=&end=&limit=` — rendered
+frames from the index, oldest-first, capped at the most recent `limit` (default
+500, max 2000).
 
 ## License
 TBD.

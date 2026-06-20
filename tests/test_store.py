@@ -157,3 +157,30 @@ def test_migration_adds_render_columns_to_old_db(tmp_path: Path) -> None:
 def test_latest_rendered_frame_no_table(tmp_path: Path) -> None:
     conn = db.connect(tmp_path / "empty.db")  # never init_db'd
     assert db.latest_rendered_frame(conn) is None
+
+
+def test_rendered_frames_order_and_limit(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    times = [
+        datetime(2026, 6, 20, h, 0, 0, tzinfo=UTC) for h in (20, 21, 22)
+    ]
+    for scan in times:
+        db.record_volume(
+            conn, site="KFTG", scan_time=scan, s3_key=f"k/{scan.isoformat()}",
+            path=Path("v"), size_bytes=1, downloaded_at=scan,
+        )
+        db.record_render(
+            conn, site="KFTG", scan_time=scan, image_path=f"KFTG/{scan:%H}.png",
+            elevation_deg=0.5, width=1, height=1, bounds=(0.0, 0.0, 1.0, 1.0),
+            rendered_at=scan,
+        )
+    rows = db.rendered_frames(conn, site="KFTG", start=None, end=None, limit=10)
+    assert [r["scan_time"] for r in rows] == [t.isoformat() for t in times]
+    # Cap keeps the most recent, still ascending.
+    capped = db.rendered_frames(conn, site="KFTG", start=None, end=None, limit=2)
+    assert [r["scan_time"] for r in capped] == [t.isoformat() for t in times[1:]]
+
+
+def test_rendered_frames_no_table(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "empty.db")  # never init_db'd
+    assert db.rendered_frames(conn, site="KFTG", start=None, end=None, limit=10) == []

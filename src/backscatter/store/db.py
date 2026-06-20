@@ -174,3 +174,34 @@ def latest_rendered_frame(conn: sqlite3.Connection) -> sqlite3.Row | None:
         return row
     except sqlite3.OperationalError:
         return None  # table doesn't exist yet (serve before any collect)
+
+
+def rendered_frames(
+    conn: sqlite3.Connection,
+    *,
+    site: str,
+    start: datetime | None,
+    end: datetime | None,
+    limit: int,
+) -> list[sqlite3.Row]:
+    """Rendered frames for a site in [start, end], ascending, capped to the most
+    recent ``limit``. Returns ``[]`` if there is no table yet."""
+    where = ["render_status = 'rendered'", "site = ?"]
+    params: list[object] = [site]
+    if start is not None:
+        where.append("scan_time >= ?")
+        params.append(start.isoformat())
+    if end is not None:
+        where.append("scan_time <= ?")
+        params.append(end.isoformat())
+    sql = (
+        f"SELECT * FROM volumes WHERE {' AND '.join(where)} "
+        "ORDER BY scan_time DESC LIMIT ?"
+    )
+    params.append(limit)
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    # Query takes the most-recent `limit` (DESC); present oldest-first for playback.
+    return list(reversed(rows))
