@@ -1,0 +1,47 @@
+[project]
+name = "backscatter"
+version = "0.1.0"
+description = "Self-hosted NEXRAD weather radar viewer with an unlimited playback archive."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "kbennett2000" }]
+dependencies = [
+    "boto3",
+    "arm-pyart",
+    "numpy",
+    "fastapi",
+]
+
+[project.scripts]
+backscatter = "backscatter.cli:main"
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "pytest",
+    "mypy",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/backscatter"]
+
+[tool.ruff]
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+packages = ["backscatter"]
+mypy_path = "src"
+strict = true

@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual env / tooling caches
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# backscatter data — never commit radar volumes, rendered tiles, or the index DB
+data/
+tiles/
+*.db
+*.sqlite
+*.sqlite3
