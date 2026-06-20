@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from backscatter.config import DEFAULT_LAT, DEFAULT_LON, load_config
+from backscatter.config import (
+    DEFAULT_LAT,
+    DEFAULT_LON,
+    DEFAULT_POLL_INTERVAL_S,
+    load_config,
+)
 
 _ENV_VARS = (
     "BACKSCATTER_SITE",
@@ -12,6 +17,7 @@ _ENV_VARS = (
     "BACKSCATTER_LON",
     "BACKSCATTER_DATA_DIR",
     "BACKSCATTER_DB_PATH",
+    "BACKSCATTER_POLL_INTERVAL",
 )
 
 
@@ -26,6 +32,12 @@ def test_default_resolves_elizabeth_to_kftg() -> None:
     config = load_config()
     assert (config.lat, config.lon) == (DEFAULT_LAT, DEFAULT_LON)
     assert config.site == "KFTG"
+    assert config.poll_interval_s == DEFAULT_POLL_INTERVAL_S
+
+
+def test_poll_interval_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BACKSCATTER_POLL_INTERVAL", "30")
+    assert load_config().poll_interval_s == 30.0
 
 
 def test_explicit_site_env_overrides_resolution(

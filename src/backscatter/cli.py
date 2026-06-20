@@ -2,7 +2,7 @@
 
 The full command surface from the roadmap is wired up; commands light up slice by
 slice (see docs/ROADMAP.md). ``pull`` (Slice 1), ``site`` (Slice 2), ``render``
-(Slice 3), and ``serve`` (Slice 4) are implemented; ``collect`` is still a stub.
+(Slice 3), ``serve`` (Slice 4), and ``collect`` (Slice 5) are all implemented.
 """
 
 from __future__ import annotations
@@ -22,9 +22,7 @@ _SITE_LIST_LEN = 5
 
 # Subcommands without their own handler yet. Each grows real arguments and a
 # handler as its roadmap slice is built.
-_STUB_SUBCOMMANDS: tuple[tuple[str, str], ...] = (
-    ("collect", "Run the continuous collection loop."),
-)
+_STUB_SUBCOMMANDS: tuple[tuple[str, str], ...] = ()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -78,6 +76,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve_parser.add_argument("--host", default="0.0.0.0", help="Bind host.")
     serve_parser.add_argument("--port", type=int, default=8000, help="Bind port.")
+
+    collect_help = "Continuously pull, render, and index the latest frames."
+    collect_parser = subparsers.add_parser(
+        "collect", help=collect_help, description=collect_help
+    )
+    collect_parser.add_argument(
+        "--max-cycles",
+        type=int,
+        default=None,
+        help="Stop after N cycles (default: run until interrupted).",
+    )
 
     for name, help_text in _STUB_SUBCOMMANDS:
         subparsers.add_parser(name, help=help_text, description=help_text)
@@ -177,6 +186,35 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_collect(args: argparse.Namespace) -> int:
+    import logging
+    import signal
+    import threading
+
+    from backscatter.collect.collect import run_collect
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    config = load_config()
+    stop = threading.Event()
+
+    def _handle(signum: int, _frame: object) -> None:
+        print(f"\nReceived signal {signum}; shutting down…")
+        stop.set()
+
+    signal.signal(signal.SIGINT, _handle)
+    signal.signal(signal.SIGTERM, _handle)
+
+    print(
+        f"Collecting near {config.lat:.4f},{config.lon:.4f} "
+        f"(nearest {config.site}) every {config.poll_interval_s:.0f}s — Ctrl-C to stop."
+    )
+    run_collect(config, stop_event=stop, max_cycles=args.max_cycles)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point for the ``backscatter`` console script."""
     parser = build_parser()
@@ -197,6 +235,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "serve":
         return _cmd_serve(args)
+
+    if args.command == "collect":
+        return _cmd_collect(args)
 
     print(f"backscatter {args.command}: not implemented yet")
     return 1

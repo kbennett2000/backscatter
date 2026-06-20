@@ -1,16 +1,17 @@
-"""Discover the newest rendered frame from the on-disk render sidecars.
+"""The newest rendered frame, read from the SQLite index.
 
-Renders are not yet tracked in the SQLite index (that arrives with the Slice 5
-collection loop), so the newest frame is found by scanning the render sidecars
-under ``data/renders/<SITE>/<name>.json``. Each sidecar already carries the bounds
-and metadata the map needs.
+The collect loop records each render in the index (ADR-0003), so the index is the
+single source of truth for "what's the latest frame" — no scanning render files off
+disk.
 """
 
 from __future__ import annotations
 
-import json
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+
+from backscatter.store import db
 
 RENDERS_SUBDIR = "renders"
 
@@ -20,7 +21,7 @@ class FrameMeta:
     """Everything the frontend needs to place one frame on the map."""
 
     site: str
-    scan_time: str  # ISO-8601 UTC, as written by the renderer
+    scan_time: str  # ISO-8601 UTC
     elevation_deg: float
     width: int
     height: int
@@ -44,37 +45,24 @@ def renders_dir(data_dir: Path) -> Path:
     return data_dir / RENDERS_SUBDIR
 
 
-def _frame_from_sidecar(sidecar: Path, root: Path) -> FrameMeta | None:
-    try:
-        meta = json.loads(sidecar.read_text(encoding="utf-8"))
-        site = meta["site"]
-        volume = meta["source_volume"]
-        bounds = meta["bounds_wgs84"]
-    except (OSError, ValueError, KeyError):
-        return None
-    # image_url mirrors the sidecar location under the /renders mount.
-    rel = sidecar.parent.relative_to(root)
+def _frame_from_row(row: sqlite3.Row) -> FrameMeta:
     return FrameMeta(
-        site=site,
-        scan_time=meta["scan_time"],
-        elevation_deg=meta["elevation_deg"],
-        width=meta["width"],
-        height=meta["height"],
-        bounds={k: bounds[k] for k in ("west", "south", "east", "north")},
-        image_url=f"/renders/{rel.as_posix()}/{volume}.png",
+        site=row["site"],
+        scan_time=row["scan_time"],
+        elevation_deg=row["elevation_deg"],
+        width=row["width"],
+        height=row["height"],
+        bounds={
+            "west": row["bounds_west"],
+            "south": row["bounds_south"],
+            "east": row["bounds_east"],
+            "north": row["bounds_north"],
+        },
+        image_url=f"/renders/{row['image_path']}",
     )
 
 
-def latest_frame(data_dir: Path) -> FrameMeta | None:
-    """Return the newest rendered frame (by scan_time), or None if there are none."""
-    root = renders_dir(data_dir)
-    if not root.is_dir():
-        return None
-    frames = [
-        frame
-        for sidecar in root.glob("**/*.json")
-        if (frame := _frame_from_sidecar(sidecar, root)) is not None
-    ]
-    if not frames:
-        return None
-    return max(frames, key=lambda f: f.scan_time)
+def latest_frame(conn: sqlite3.Connection) -> FrameMeta | None:
+    """Return the newest rendered frame from the index, or None."""
+    row = db.latest_rendered_frame(conn)
+    return _frame_from_row(row) if row is not None else None

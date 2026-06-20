@@ -45,6 +45,7 @@ def _config(tmp_path: Path, site: str = "KFTG") -> Config:
         site=site,
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "backscatter.db",
+        poll_interval_s=60.0,
     )
 
 

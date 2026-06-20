@@ -8,6 +8,7 @@ cheap and never duplicates.
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -55,10 +56,60 @@ def find_latest(
     return None
 
 
-def _destination(config: Config, key: str, scan_time: datetime) -> Path:
+def _destination(config: Config, site: str, key: str, scan_time: datetime) -> Path:
     """Local path for a volume: ``data_dir/<SITE>/<YYYYMMDD>/<basename>``."""
     basename = key.rsplit("/", 1)[-1]
-    return config.data_dir / config.site / f"{scan_time:%Y%m%d}" / basename
+    return config.data_dir / site / f"{scan_time:%Y%m%d}" / basename
+
+
+def fetch_volume(
+    config: Config,
+    site: str,
+    conn: sqlite3.Connection,
+    *,
+    now: datetime,
+    client: S3Client,
+) -> PullResult:
+    """Find→dedupe→download→index the latest volume for ``site``.
+
+    Shared core used by the ``pull`` CLI and the collect loop. Operates on an
+    already-open connection (the caller owns the lifecycle) and an explicit site,
+    so the collect loop can fail over across sites.
+    """
+    found = find_latest(client, site, now)
+    if found is None:
+        return PullResult(status=PullStatus.NO_VOLUME, site=site)
+    key, scan_time = found
+
+    if db.volume_exists(conn, site, scan_time):
+        return PullResult(
+            status=PullStatus.ALREADY_HAVE,
+            site=site,
+            scan_time=scan_time,
+            s3_key=key,
+        )
+
+    data = s3.download_volume(client, key)
+    dest = _destination(config, site, key, scan_time)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(data)
+
+    db.record_volume(
+        conn,
+        site=site,
+        scan_time=scan_time,
+        s3_key=key,
+        path=dest,
+        size_bytes=len(data),
+        downloaded_at=datetime.now(UTC),
+    )
+    return PullResult(
+        status=PullStatus.STORED,
+        site=site,
+        scan_time=scan_time,
+        s3_key=key,
+        path=dest,
+    )
 
 
 def pull_latest(
@@ -70,45 +121,10 @@ def pull_latest(
     """Fetch + index the latest volume for ``config.site``. Idempotent per scan."""
     now = now or datetime.now(UTC)
     client = s3.make_client(client)
-    site = config.site
-
-    found = find_latest(client, site, now)
-    if found is None:
-        return PullResult(status=PullStatus.NO_VOLUME, site=site)
-    key, scan_time = found
 
     conn = db.connect(config.db_path)
     try:
         db.init_db(conn)
-        if db.volume_exists(conn, site, scan_time):
-            return PullResult(
-                status=PullStatus.ALREADY_HAVE,
-                site=site,
-                scan_time=scan_time,
-                s3_key=key,
-            )
-
-        data = s3.download_volume(client, key)
-        dest = _destination(config, key, scan_time)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(data)
-
-        db.record_volume(
-            conn,
-            site=site,
-            scan_time=scan_time,
-            s3_key=key,
-            path=dest,
-            size_bytes=len(data),
-            downloaded_at=datetime.now(UTC),
-        )
+        return fetch_volume(config, config.site, conn, now=now, client=client)
     finally:
         conn.close()
-
-    return PullResult(
-        status=PullStatus.STORED,
-        site=site,
-        scan_time=scan_time,
-        s3_key=key,
-        path=dest,
-    )

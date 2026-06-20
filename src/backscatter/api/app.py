@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backscatter.api.frames import latest_frame, renders_dir
 from backscatter.config import Config
+from backscatter.store import db
 
 # Frontend lives at the repo-level web/ dir (self-hosted from source). Resolve it
 # relative to this file: src/backscatter/api/app.py -> repo root.
@@ -34,7 +35,11 @@ def create_app(config: Config, *, web_dir: Path | None = None) -> FastAPI:
 
     @app.get("/api/latest")
     def api_latest() -> dict[str, object]:
-        frame = latest_frame(config.data_dir)
+        conn = db.connect(config.db_path)
+        try:
+            frame = latest_frame(conn)
+        finally:
+            conn.close()
         if frame is None:
             raise HTTPException(status_code=404, detail="no rendered frames yet")
         return frame.to_json()

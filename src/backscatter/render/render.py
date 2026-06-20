@@ -31,6 +31,7 @@ class RenderResult:
     sidecar_path: Path
     site: str
     scan_time: datetime
+    elevation_deg: float
     width: int
     height: int
     bounds_wgs84: tuple[float, float, float, float]  # west, south, east, north
@@ -90,6 +91,7 @@ def render_volume(
         sidecar_path=sidecar_path,
         site=icao,
         scan_time=scan_time,
+        elevation_deg=sweep.elevation_deg,
         width=raster.width,
         height=raster.height,
         bounds_wgs84=raster.bounds_wgs84,

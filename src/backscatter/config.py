@@ -22,6 +22,9 @@ DEFAULT_LON = -104.5969
 DEFAULT_DATA_DIR = Path("data")
 # Default DB filename, placed inside the resolved data dir unless overridden.
 DEFAULT_DB_NAME = "backscatter.db"
+# How often the collect loop polls S3. The radar cadence (4–10 min) is the real
+# ceiling; ~60s with timestamp dedupe captures every volume without hammering S3.
+DEFAULT_POLL_INTERVAL_S = 60.0
 
 
 @dataclass(frozen=True)
@@ -33,6 +36,7 @@ class Config:
     site: str
     data_dir: Path
     db_path: Path
+    poll_interval_s: float
 
 
 def load_config(
@@ -68,12 +72,17 @@ def load_config(
     db_path_env = os.environ.get("BACKSCATTER_DB_PATH")
     db_path = Path(db_path_env) if db_path_env else data_dir / DEFAULT_DB_NAME
 
+    poll_interval_s = _first_float(
+        None, os.environ.get("BACKSCATTER_POLL_INTERVAL"), DEFAULT_POLL_INTERVAL_S
+    )
+
     return Config(
         lat=resolved_lat,
         lon=resolved_lon,
         site=resolved_site,
         data_dir=data_dir,
         db_path=db_path,
+        poll_interval_s=poll_interval_s,
     )
 
 

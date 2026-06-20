@@ -1,7 +1,8 @@
 """SQLite frame index — one row per stored volume scan.
 
 The raw `_V06` files on disk are the source of truth (ADR-0003); this index records
-what we have so playback and dedupe are simple SQL. Dedupe is keyed on
+what we have (including render status + the rendered frame's bounds) so playback,
+dedupe, and "what's the latest frame" are simple SQL. Dedupe is keyed on
 ``(site, scan_time)``: the same volume scan is never stored twice.
 """
 
@@ -20,9 +21,34 @@ CREATE TABLE IF NOT EXISTS volumes (
     path          TEXT    NOT NULL,
     size_bytes    INTEGER NOT NULL,
     downloaded_at TEXT    NOT NULL,
+    render_status TEXT    NOT NULL DEFAULT 'pending',  -- pending|rendered|failed
+    image_path    TEXT,              -- rendered PNG, relative to data/renders
+    rendered_at   TEXT,
+    elevation_deg REAL,
+    width         INTEGER,
+    height        INTEGER,
+    bounds_west   REAL,
+    bounds_south  REAL,
+    bounds_east   REAL,
+    bounds_north  REAL,
     UNIQUE(site, scan_time)
 );
 """
+
+# Render columns, added to `volumes` after the base table. Old dev DBs created
+# before Slice 5 are migrated by ALTER (see _ensure_render_columns).
+_RENDER_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("render_status", "TEXT NOT NULL DEFAULT 'pending'"),
+    ("image_path", "TEXT"),
+    ("rendered_at", "TEXT"),
+    ("elevation_deg", "REAL"),
+    ("width", "INTEGER"),
+    ("height", "INTEGER"),
+    ("bounds_west", "REAL"),
+    ("bounds_south", "REAL"),
+    ("bounds_east", "REAL"),
+    ("bounds_north", "REAL"),
+)
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -30,12 +56,23 @@ def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+    # WAL lets the serve process read while the collect process writes.
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 
+def _ensure_render_columns(conn: sqlite3.Connection) -> None:
+    """Add any missing render columns to a pre-Slice-5 `volumes` table."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(volumes)")}
+    for name, decl in _RENDER_COLUMNS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE volumes ADD COLUMN {name} {decl}")
+
+
 def init_db(conn: sqlite3.Connection) -> None:
-    """Create the schema if it does not exist. Idempotent."""
+    """Create the schema (and migrate old DBs) if needed. Idempotent."""
     conn.executescript(_SCHEMA)
+    _ensure_render_columns(conn)
     conn.commit()
 
 
@@ -77,3 +114,63 @@ def record_volume(
         ),
     )
     conn.commit()
+
+
+def record_render(
+    conn: sqlite3.Connection,
+    *,
+    site: str,
+    scan_time: datetime,
+    image_path: str,
+    elevation_deg: float,
+    width: int,
+    height: int,
+    bounds: tuple[float, float, float, float],  # west, south, east, north
+    rendered_at: datetime,
+) -> None:
+    """Record a successful render against an existing volume row."""
+    west, south, east, north = bounds
+    conn.execute(
+        "UPDATE volumes SET render_status = 'rendered', image_path = ?, "
+        "rendered_at = ?, elevation_deg = ?, width = ?, height = ?, "
+        "bounds_west = ?, bounds_south = ?, bounds_east = ?, bounds_north = ? "
+        "WHERE site = ? AND scan_time = ?",
+        (
+            image_path,
+            rendered_at.isoformat(),
+            elevation_deg,
+            width,
+            height,
+            west,
+            south,
+            east,
+            north,
+            site,
+            scan_time.isoformat(),
+        ),
+    )
+    conn.commit()
+
+
+def mark_render_failed(
+    conn: sqlite3.Connection, site: str, scan_time: datetime
+) -> None:
+    """Flag a volume's render as failed (the raw volume is still kept)."""
+    conn.execute(
+        "UPDATE volumes SET render_status = 'failed' "
+        "WHERE site = ? AND scan_time = ?",
+        (site, scan_time.isoformat()),
+    )
+    conn.commit()
+
+
+def latest_rendered_frame(conn: sqlite3.Connection) -> sqlite3.Row | None:
+    """Newest successfully-rendered frame, or None (incl. when no table yet)."""
+    try:
+        row: sqlite3.Row | None = conn.execute(
+            "SELECT * FROM volumes WHERE render_status = 'rendered' "
+            "ORDER BY scan_time DESC LIMIT 1"
+        ).fetchone()
+        return row
+    except sqlite3.OperationalError:
+        return None  # table doesn't exist yet (serve before any collect)
