@@ -21,6 +21,7 @@ dev = [
     "ruff",
     "pytest",
     "mypy",
+    "moto[s3]",
 ]
 
 [build-system]
@@ -45,3 +46,8 @@ python_version = "3.12"
 packages = ["backscatter"]
 mypy_path = "src"
 strict = true
+
+# boto3/botocore/moto ship no type information and we don't depend on their stubs.
+[[tool.mypy.overrides]]
+module = ["boto3.*", "botocore.*", "moto.*"]
+ignore_missing_imports = true
