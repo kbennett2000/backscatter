@@ -287,6 +287,8 @@ dependencies = [
     { name = "boto3" },
     { name = "fastapi" },
     { name = "numpy" },
+    { name = "pillow" },
+    { name = "pyproj" },
 ]
 
 [package.dev-dependencies]
@@ -303,6 +305,8 @@ requires-dist = [
     { name = "boto3" },
     { name = "fastapi" },
     { name = "numpy" },
+    { name = "pillow" },
+    { name = "pyproj" },
 ]
 
 [package.metadata.requires-dev]

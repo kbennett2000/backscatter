@@ -11,6 +11,8 @@ dependencies = [
     "arm-pyart",
     "numpy",
     "fastapi",
+    "pyproj",
+    "pillow",
 ]
 
 [project.scripts]
@@ -49,7 +51,7 @@ packages = ["backscatter"]
 mypy_path = "src"
 strict = true
 
-# boto3/botocore/moto ship no type information and we don't depend on their stubs.
+# boto3/botocore/moto/pyart ship no type information and we don't depend on stubs.
 [[tool.mypy.overrides]]
-module = ["boto3.*", "botocore.*", "moto.*"]
+module = ["boto3.*", "botocore.*", "moto.*", "pyart.*"]
 ignore_missing_imports = true

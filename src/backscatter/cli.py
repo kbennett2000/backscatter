@@ -1,18 +1,20 @@
 """Operator CLI for backscatter.
 
 The full command surface from the roadmap is wired up; commands light up slice by
-slice (see docs/ROADMAP.md). ``pull`` (Slice 1) and ``site`` (Slice 2) are
-implemented; the rest are still stubs that report they are not implemented yet.
+slice (see docs/ROADMAP.md). ``pull`` (Slice 1), ``site`` (Slice 2), and ``render``
+(Slice 3) are implemented; the rest are still stubs.
 """
 
 from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from pathlib import Path
 
 from backscatter import __version__
 from backscatter.config import load_config
 from backscatter.ingest.pull import PullStatus, pull_latest
+from backscatter.render.render import render_volume
 from backscatter.sites.select import rank_sites
 
 # How many ranked sites the `site` command prints.
@@ -21,7 +23,6 @@ _SITE_LIST_LEN = 5
 # Subcommands without their own handler yet. Each grows real arguments and a
 # handler as its roadmap slice is built.
 _STUB_SUBCOMMANDS: tuple[tuple[str, str], ...] = (
-    ("render", "Decode a stored volume and render a georeferenced image."),
     ("serve", "Run the FastAPI server (tiles + timeline API)."),
     ("collect", "Run the continuous collection loop."),
 )
@@ -61,6 +62,15 @@ def build_parser() -> argparse.ArgumentParser:
             'Resolve for this location instead of the configured one, '
             'e.g. "39.4,-104.6".'
         ),
+    )
+
+    render_help = "Decode a stored volume and render a georeferenced image."
+    render_parser = subparsers.add_parser(
+        "render", help=render_help, description=render_help
+    )
+    render_parser.add_argument(
+        "volume",
+        help="Path to a stored _V06 volume file.",
     )
 
     for name, help_text in _STUB_SUBCOMMANDS:
@@ -127,6 +137,26 @@ def _cmd_site(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_render(args: argparse.Namespace) -> int:
+    volume = Path(args.volume)
+    if not volume.is_file():
+        print(f"No such volume file: {volume}")
+        return 2
+    config = load_config()
+    result = render_volume(volume, config)
+    west, south, east, north = result.bounds_wgs84
+    print(
+        f"Rendered {result.site} {result.scan_time:%Y-%m-%d %H:%M:%S}Z "
+        f"({result.width}x{result.height})"
+    )
+    print(f"  image:   {result.png_path}")
+    print(f"  sidecar: {result.sidecar_path}")
+    print(
+        f"  bounds (W,S,E,N): {west:.4f}, {south:.4f}, {east:.4f}, {north:.4f}"
+    )
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point for the ``backscatter`` console script."""
     parser = build_parser()
@@ -141,6 +171,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "site":
         return _cmd_site(args)
+
+    if args.command == "render":
+        return _cmd_render(args)
 
     print(f"backscatter {args.command}: not implemented yet")
     return 1
