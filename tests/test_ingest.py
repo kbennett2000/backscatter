@@ -40,6 +40,8 @@ def _put_raw(client: object, key: str) -> None:
 
 def _config(tmp_path: Path, site: str = "KFTG") -> Config:
     return Config(
+        lat=39.3603,
+        lon=-104.5969,
         site=site,
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "backscatter.db",

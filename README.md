@@ -37,6 +37,11 @@ This project uses unaltered NOAA NEXRAD data. NOAA makes the data openly
 available; **this project is not endorsed by or affiliated with NOAA or the
 National Weather Service.**
 
+Nearest-radar selection uses a bundled static NEXRAD site table
+([`src/backscatter/sites/nexrad_sites.csv`](src/backscatter/sites/nexrad_sites.csv)),
+derived from the NOAA/NCEI HOMR station list (see that file's header for source URL
+and retrieval date). It ships with the package and is never fetched at runtime.
+
 ## Not for life-safety
 backscatter is an enthusiast tool. **Do not** use it for protection of life or
 property. For warnings and official guidance, rely on the National Weather Service

@@ -41,3 +41,20 @@ precedence layer (file sitting between env and defaults) without touching caller
   we can add it later with no churn. Revisit when `collect` needs richer config.
 - **Scattered `os.environ` reads at each call site.** Rejected: no single source
   of truth, hard to test, and exactly what CLAUDE.md warns against.
+
+## Update — Slice 2 (location-based site resolution)
+The primary location input is now a **lat/lon**, not a site code. `Config` gains
+`lat` and `lon`; the active `site` is **resolved at load** as the nearest radar to
+the lat/lon against the bundled NEXRAD table (ADR-0005), via
+`sites.select.nearest_site`.
+
+Resolution and precedence:
+- `lat` / `lon` — arg > `BACKSCATTER_LAT` / `BACKSCATTER_LON` > default
+  (**Elizabeth, CO**: `39.3603, -104.5969`, which resolves to `KFTG`).
+- `site` — an **explicit** override (`site` arg, e.g. `backscatter pull KTLX`, or
+  `BACKSCATTER_SITE`) still wins, upper-cased. Absent that, `site` is the resolved
+  nearest radar. There is no longer a hardcoded default site.
+
+The single-source-of-truth and "env reads live only in `config.py`" invariants are
+unchanged. `pull` is untouched — it still reads `config.site`, which is now
+resolved rather than hardcoded.

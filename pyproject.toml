@@ -30,6 +30,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/backscatter"]
+# Ship the bundled NEXRAD site table (package data, loaded via importlib.resources).
+artifacts = ["src/backscatter/sites/nexrad_sites.csv"]
 
 [tool.ruff]
 line-length = 88
