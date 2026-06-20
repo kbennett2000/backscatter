@@ -59,6 +59,22 @@ def test_nearest_site_known_points(lat: float, lon: float, expected: str) -> Non
     assert nearest_site(lat, lon).icao == expected
 
 
+def test_research_radars_excluded_from_table() -> None:
+    # KCRI (ROC) and KOUN (NSSL) are non-operational Norman, OK research/test
+    # radars. They are intentionally excluded from the bundled table; a future CSV
+    # regeneration must not silently re-add them. See nexrad_sites.csv header.
+    icaos = {s.icao for s in load_sites()}
+    assert "KCRI" not in icaos
+    assert "KOUN" not in icaos
+
+
+def test_norman_area_resolves_to_operational_ktlx() -> None:
+    # A coordinate essentially on top of the excluded KCRI/KOUN must resolve to the
+    # nearest *operational* radar, KTLX — not a re-added research radar. Before the
+    # exclusion this point resolved to KCRI, so this is the regression guard.
+    assert nearest_site(35.2226, -97.4395).icao == "KTLX"
+
+
 def test_rank_sites_is_distance_ordered() -> None:
     ranked = rank_sites(39.3603, -104.5969)
     distances = [r.distance_km for r in ranked]
