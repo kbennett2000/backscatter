@@ -1,8 +1,8 @@
 """Operator CLI for backscatter.
 
 The full command surface from the roadmap is wired up; commands light up slice by
-slice (see docs/ROADMAP.md). ``pull`` (Slice 1), ``site`` (Slice 2), and ``render``
-(Slice 3) are implemented; the rest are still stubs.
+slice (see docs/ROADMAP.md). ``pull`` (Slice 1), ``site`` (Slice 2), ``render``
+(Slice 3), and ``serve`` (Slice 4) are implemented; ``collect`` is still a stub.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ _SITE_LIST_LEN = 5
 # Subcommands without their own handler yet. Each grows real arguments and a
 # handler as its roadmap slice is built.
 _STUB_SUBCOMMANDS: tuple[tuple[str, str], ...] = (
-    ("serve", "Run the FastAPI server (tiles + timeline API)."),
     ("collect", "Run the continuous collection loop."),
 )
 
@@ -72,6 +71,13 @@ def build_parser() -> argparse.ArgumentParser:
         "volume",
         help="Path to a stored _V06 volume file.",
     )
+
+    serve_help = "Serve the map UI + frame API (FastAPI)."
+    serve_parser = subparsers.add_parser(
+        "serve", help=serve_help, description=serve_help
+    )
+    serve_parser.add_argument("--host", default="0.0.0.0", help="Bind host.")
+    serve_parser.add_argument("--port", type=int, default=8000, help="Bind port.")
 
     for name, help_text in _STUB_SUBCOMMANDS:
         subparsers.add_parser(name, help=help_text, description=help_text)
@@ -157,6 +163,20 @@ def _cmd_render(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_serve(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    from backscatter.api.app import create_app
+
+    config = load_config()
+    print(
+        f"Serving backscatter on http://{args.host}:{args.port} "
+        f"(center {config.lat:.4f},{config.lon:.4f}, site {config.site})"
+    )
+    uvicorn.run(create_app(config), host=args.host, port=args.port)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point for the ``backscatter`` console script."""
     parser = build_parser()
@@ -174,6 +194,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "render":
         return _cmd_render(args)
+
+    if args.command == "serve":
+        return _cmd_serve(args)
 
     print(f"backscatter {args.command}: not implemented yet")
     return 1

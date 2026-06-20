@@ -48,7 +48,17 @@ property. For warnings and official guidance, rely on the National Weather Servi
 and NOAA Weather Radio.
 
 ## Quickstart
-_TBD — see [`docs/ROADMAP.md`](docs/ROADMAP.md) for build status._
+Early build — a few commands work end to end:
+
+```
+uv run backscatter pull              # fetch the latest volume for the configured site
+uv run backscatter render <volume>   # render one georeferenced frame (PNG + bounds)
+uv run backscatter serve             # serve the map UI at http://<host>:8000
+```
+
+`serve` opens a MapLibre map (keyless OpenFreeMap basemap) centered on your
+configured location with the latest rendered frame overlaid. See
+[`docs/ROADMAP.md`](docs/ROADMAP.md) for build status.
 
 ## License
 TBD.

@@ -13,6 +13,7 @@ dependencies = [
     "fastapi",
     "pyproj",
     "pillow",
+    "uvicorn[standard]",
 ]
 
 [project.scripts]
@@ -24,6 +25,7 @@ dev = [
     "pytest",
     "mypy",
     "moto[s3]",
+    "httpx",
 ]
 
 [build-system]
