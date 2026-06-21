@@ -4,6 +4,9 @@
 const BASEMAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
 const RADAR_SOURCE = "radar-frame";
 const RADAR_LAYER = "radar-frame-layer";
+const LOC_SOURCE = "locations"; // GeoJSON source feeding the location pins
+const LOC_CIRCLE = "loc-circle";
+const LOC_LABEL = "loc-label";
 const PRELOAD_AHEAD = 3; // warm the next few PNGs so playback doesn't jank
 const PAGE_SIZE = 20; // frames per request when paging an explicit window
 const PAGE_FETCH_AHEAD = 3; // fetch the next page when this close to the end
@@ -110,6 +113,7 @@ async function refreshLocations() {
     if (fallback) await switchLocation(fallback.name);
   }
   populateSelector(state.location);
+  refreshLocationMarkers(); // add/move/remove pins to match the edited list
   renderLocList();
 }
 
@@ -264,15 +268,64 @@ async function switchLocation(name) {
   state.location = loc.name;
   state.site = loc.site;
   localStorage.setItem(LS_KEY, loc.name);
+  refreshLocationMarkers(); // restyle which pin is highlighted as active
   state.map.flyTo({ center: [loc.lon, loc.lat], zoom: 7 });
   await refreshExtent();
   await loadDefault(); // re-point the timeline at this location's recent window
 }
 
 async function init() {
+  ensureLocationLayers(); // pins for every configured location, above the radar
+  refreshLocationMarkers();
   await refreshExtent();
   wireControls();
   await loadDefault(); // recent rolling window (unchanged default UX)
+}
+
+// A pin per configured location: a circle + a name label. The active location is
+// amber and larger; the others are muted. Built once; data refreshed via setData.
+function ensureLocationLayers() {
+  if (state.map.getSource(LOC_SOURCE)) return;
+  state.map.addSource(LOC_SOURCE, {
+    type: "geojson",
+    data: locationFeatures([], null),
+  });
+  state.map.addLayer({
+    id: LOC_CIRCLE,
+    type: "circle",
+    source: LOC_SOURCE,
+    layout: { "circle-sort-key": ["case", ["get", "active"], 1, 0] },
+    paint: {
+      "circle-radius": ["case", ["get", "active"], 8, 5.5],
+      "circle-color": ["case", ["get", "active"], "#ffb020", "#ffffff"],
+      "circle-stroke-color": ["case", ["get", "active"], "#3a2600", "#0b1018"],
+      "circle-stroke-width": 2,
+    },
+  });
+  state.map.addLayer({
+    id: LOC_LABEL,
+    type: "symbol",
+    source: LOC_SOURCE,
+    layout: {
+      "text-field": ["get", "name"],
+      "text-font": ["Noto Sans Regular"],
+      "text-size": 12,
+      "text-offset": [0, 1.1],
+      "text-anchor": "top",
+      // Let close labels collide-hide rather than smash into an unreadable mess.
+      "text-allow-overlap": false,
+    },
+    paint: {
+      "text-color": ["case", ["get", "active"], "#ffb020", "#ffffff"],
+      "text-halo-color": "#0b1018",
+      "text-halo-width": 1.6,
+    },
+  });
+}
+
+function refreshLocationMarkers() {
+  const src = state.map.getSource(LOC_SOURCE);
+  if (src) src.setData(locationFeatures(state.locations, state.location));
 }
 
 async function refreshExtent() {
@@ -375,12 +428,17 @@ function ensureLayer(frame) {
     url: frame.image_url,
     coordinates: cornersFromBounds(frame.bounds),
   });
-  state.map.addLayer({
-    id: RADAR_LAYER,
-    type: "raster",
-    source: RADAR_SOURCE,
-    paint: { "raster-opacity": 0.8 },
-  });
+  // Insert the radar below the location pins so the markers stay visible on top.
+  const below = state.map.getLayer(LOC_CIRCLE) ? LOC_CIRCLE : undefined;
+  state.map.addLayer(
+    {
+      id: RADAR_LAYER,
+      type: "raster",
+      source: RADAR_SOURCE,
+      paint: { "raster-opacity": 0.8 },
+    },
+    below,
+  );
   state.layerReady = true;
 }
 
