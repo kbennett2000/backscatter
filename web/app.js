@@ -19,6 +19,11 @@ const statepanel = $("statepanel");
 const spTitle = $("sp-title");
 const spBody = $("sp-body");
 const spAction = $("sp-action");
+const spBackfill = $("sp-backfill");
+const spProgress = $("sp-progress");
+const spProgressText = $("sp-progress-text");
+const spProgressFill = $("sp-progress-fill");
+const spError = $("sp-error");
 const newbanner = $("newbanner");
 const rangebar = $("rangebar");
 const timeline = $("timeline");
@@ -62,6 +67,9 @@ const state = {
   extent: { min: null, max: null, count: 0 },
   view: "has-data", // 'has-data' | 'wrong-window' | 'empty' (first-run state)
   pollTimer: null, // setInterval handle for the new-frame poll
+  backfillJobId: null, // id of the running one-click backfill job, or null
+  backfillTimer: null, // setTimeout handle for the job-status poll
+  backfillActive: false, // a backfill is in flight (suppresses the 30s frame poll)
   window: null, // {start, end} ISO when an explicit window is loaded; null = recent
   nextCursor: null,
   fetching: false,
@@ -381,16 +389,25 @@ function updateStatus() {
 // --- first-run state messaging ----------------------------------------------
 
 function showStatePanel(view) {
+  // Don't stomp a backfill that's already running in this same card.
+  if (state.backfillActive) {
+    statepanel.hidden = false;
+    return;
+  }
+  resetBackfillUI();
   if (view === "empty") {
     spTitle.textContent = "Collecting radar now";
     spBody.innerHTML =
       `backscatter is collecting radar for <strong>${escapeHtml(state.location)}</strong> ` +
       "now. Your first frame should appear within about 5 minutes — this page updates on " +
-      "its own, so there's nothing to do.<br><br>Want to see past storms sooner? You can " +
+      "its own. Don't want to wait? Load the last few hours of radar right now. " +
       '<a href="https://kbennett2000.github.io/backscatter/help/' +
       '#i-dont-want-to-wait-can-i-load-past-radar" target="_blank" rel="noopener">' +
-      "load recent history</a>.";
+      "What's this?</a>";
     spAction.hidden = true;
+    spBackfill.textContent = "Load recent radar now";
+    spBackfill.classList.remove("secondary"); // primary CTA on the first-run card
+    spBackfill.hidden = false;
   } else {
     // wrong-window: the archive HAS data, just not for the picked range.
     const from = state.extent.min ? fmtLocalDateTime(state.extent.min) : "—";
@@ -402,12 +419,24 @@ function showStatePanel(view) {
       "(your local time).";
     spAction.textContent = "Jump to latest";
     spAction.hidden = false;
+    spBackfill.textContent = "Load recent radar";
+    spBackfill.classList.add("secondary"); // "Jump to latest" is the primary action here
+    spBackfill.hidden = false;
   }
   statepanel.hidden = false;
 }
 
 function hideStatePanel() {
   statepanel.hidden = true;
+}
+
+// Reset the in-card backfill button/progress to its idle look (button enabled,
+// progress + error hidden). Called whenever the panel is (re)shown.
+function resetBackfillUI() {
+  spBackfill.disabled = false;
+  spProgress.hidden = true;
+  spError.hidden = true;
+  spProgressFill.style.width = "0%";
 }
 
 function showNewBanner() {
@@ -419,12 +448,126 @@ function hideNewBanner() {
   newbanner.hidden = true;
 }
 
+// --- one-click backfill (Slice 19) ------------------------------------------
+// Kick off a server-side backfill of recent radar, then poll its status and show
+// plain-language progress in the same card. On success the timeline auto-populates;
+// on failure we say so plainly and let the user retry.
+
+const BACKFILL_HOURS = 6; // a single click loads the last 6 hours
+
+async function startBackfill() {
+  if (state.backfillActive) return; // guard double-click
+  state.backfillActive = true;
+  spBackfill.disabled = true;
+  spError.hidden = true;
+  spProgress.hidden = false;
+  showBackfillProgress(null); // "Starting…"
+  maybePoll(); // pause the 30s frame poll while the backfill drives refreshes
+
+  let resp;
+  try {
+    resp = await fetch("/api/backfill", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ location: state.location, hours: BACKFILL_HOURS }),
+    });
+  } catch {
+    return failBackfill("Couldn't reach the server — check your connection and try again.");
+  }
+
+  if (resp.status === 409) {
+    // Already running (e.g. another tab) — attach to that job instead of erroring.
+    const data = await resp.json().catch(() => ({}));
+    const running = data.detail && data.detail.job;
+    if (running && running.id) {
+      state.backfillJobId = running.id;
+      showBackfillProgress(running);
+      scheduleBackfillPoll();
+      return;
+    }
+    return failBackfill("A backfill is already running. Give it a moment.");
+  }
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    return failBackfill(data.detail || `Couldn't start backfill (error ${resp.status}).`);
+  }
+
+  const job = await resp.json();
+  state.backfillJobId = job.id;
+  showBackfillProgress(job);
+  scheduleBackfillPoll();
+}
+
+function showBackfillProgress(job) {
+  spProgressText.textContent = progressText(job);
+  const pct = job ? progressPercent(job.fetched, job.total) : 0;
+  spProgressFill.style.width = `${pct}%`;
+}
+
+function scheduleBackfillPoll() {
+  state.backfillTimer = setTimeout(pollBackfill, pollDelayMs());
+}
+
+async function pollBackfill() {
+  if (!state.backfillJobId) return;
+  let job;
+  try {
+    const r = await fetch(`/api/backfill/${enc(state.backfillJobId)}`);
+    if (r.status === 404) {
+      // The job was lost (server restart) — it's idempotent, so just let them retry.
+      return failBackfill("Lost track of the backfill — please try again.");
+    }
+    job = await r.json();
+  } catch {
+    scheduleBackfillPoll(); // transient; keep polling
+    return;
+  }
+  showBackfillProgress(job);
+  if (!isTerminal(job.state)) {
+    scheduleBackfillPoll();
+    return;
+  }
+  // Terminal.
+  state.backfillActive = false;
+  state.backfillJobId = null;
+  if (job.state === "failed") {
+    return failBackfill("Couldn't load history right now — please try again.");
+  }
+  await finishBackfill();
+}
+
+// Success: refresh the archive extent and jump to the latest frames. applyFrames
+// hides the panel when frames arrive; if nothing loaded, the empty card returns.
+async function finishBackfill() {
+  await refreshExtent();
+  await loadDefault();
+  maybePoll(); // resume the normal frame poll
+}
+
+function failBackfill(message) {
+  state.backfillActive = false;
+  state.backfillJobId = null;
+  if (state.backfillTimer !== null) {
+    clearTimeout(state.backfillTimer);
+    state.backfillTimer = null;
+  }
+  spProgress.hidden = true;
+  spError.textContent = message;
+  spError.hidden = false;
+  spBackfill.disabled = false;
+  maybePoll(); // resume the normal frame poll
+}
+
 // --- auto-update poll (surface newly-landed frames without a reload) ---------
 
 const POLL_MS = 30000;
 
 function maybePoll() {
-  const want = shouldPoll(state.view, state.window !== null, document.hidden);
+  // While a backfill is in flight it drives its own refresh, so suppress the
+  // frame poll to avoid two refreshers fighting over the same card.
+  const want =
+    !state.backfillActive &&
+    shouldPoll(state.view, state.window !== null, document.hidden);
   if (want && state.pollTimer === null) {
     state.pollTimer = setInterval(pollTick, POLL_MS);
   } else if (!want && state.pollTimer !== null) {
@@ -707,6 +850,7 @@ function wireControls() {
     pause();
     loadDefault();
   });
+  spBackfill.addEventListener("click", startBackfill);
   newbanner.addEventListener("click", () => {
     pause();
     loadDefault();

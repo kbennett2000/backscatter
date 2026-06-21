@@ -272,6 +272,27 @@ never a blank, baffling map. Frontend only; reuses the existing read-only frame 
 - **Local time** in the readout/frame time/messages (the time *picker* stays UTC — that
   overhaul is a later clarity slice).
 
+## Slice 19 — One-click "Load recent radar now" (web-triggered backfill)
+Put the existing backfill pipeline (Slice 12) behind a one-click web button so a
+first-run user gets recent history without the CLI — the load-bearing other half of
+Slice 18's empty state. (ADR-0010.)
+- **Async job, not a blocked request:** a backfill is minutes of download + render, so
+  `POST /api/backfill` starts a daemon-thread job and returns immediately; the UI polls
+  `GET /api/backfill/{id}`. An in-memory `JobManager` runs **one job at a time** (a second
+  start → 409). No external queue/broker.
+- **Two writers, one DB, two processes:** the job writes the index while the live
+  collector also writes it. `serve` and `collect` are separate processes, so safety rests
+  on SQLite **WAL + `busy_timeout` (raised to 15s) + `UNIQUE(site, scan_time)`**, *not* an
+  app-level lock — proven by a concurrency test (two threads, overlapping keys → no lock
+  error, no dupes, `integrity_check` ok).
+- **Bounded:** a click loads the **last 6 hours**, hard-capped at 24h server-side (well
+  inside retention, so no prune warning). Reuses `run_backfill` unchanged but for an
+  additive `progress_cb`; same dedupe / skip-on-bad-volume / idempotency.
+- **Frontend:** the empty card's docs link becomes a primary **"Load recent radar now"**
+  button with a live progress bar ("Loading radar… 12 of 48 frames"); on success the
+  timeline auto-populates, on failure a plain "try again." Also offered as a secondary
+  action on the wrong-window card. Pure `web/backfill.js`, unit-tested like `firstrun.js`.
+
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher
 - MRMS national composite at low zoom (wide-area context — the *right* way to use

@@ -102,6 +102,74 @@ body {
   display: none;
 }
 
+/* Primary "Load recent radar now" CTA on the first-run card. */
+#statepanel #sp-backfill {
+  display: block;
+  width: 100%;
+  margin-top: 16px;
+  font: 600 14px system-ui, sans-serif;
+  cursor: pointer;
+  border: 0;
+  border-radius: 6px;
+  padding: 10px 16px;
+  background: #ffb020;
+  color: #1a1200;
+}
+
+#statepanel #sp-backfill[hidden] {
+  display: none;
+}
+
+#statepanel #sp-backfill:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* On the wrong-window card "Jump to latest" is primary, so this drops to secondary. */
+#statepanel #sp-backfill.secondary {
+  margin-top: 8px;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+#statepanel #sp-progress {
+  margin-top: 16px;
+}
+
+#statepanel #sp-progress[hidden] {
+  display: none;
+}
+
+#statepanel #sp-progress-text {
+  margin-bottom: 8px;
+  color: #cdd6e0;
+  font-variant-numeric: tabular-nums;
+}
+
+#statepanel #sp-progress-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+
+#statepanel #sp-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: #ffb020;
+  transition: width 0.3s ease;
+}
+
+#statepanel #sp-error {
+  margin-top: 10px;
+  color: #ff9a9a;
+}
+
+#statepanel #sp-error[hidden] {
+  display: none;
+}
+
 /* "New radar available" nudge, top-center under the rangebar. */
 #newbanner {
   position: absolute;

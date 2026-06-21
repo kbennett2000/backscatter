@@ -10,7 +10,8 @@ new radar picture every few minutes while it runs, so a brand-new setup is empty
 first little while.
 
 - Leave it running and check back in 10–15 minutes.
-- Or jump ahead and load past radar right now — see [below](#i-dont-want-to-wait-can-i-load-past-radar).
+- Or click **Load recent radar now** on the page to fill in the last few hours
+  immediately — see [below](#i-dont-want-to-wait-can-i-load-past-radar).
 
 If it's still blank after a while, peek at what it's doing:
 
@@ -23,7 +24,16 @@ You should see lines about collecting and rendering. (Press **Ctrl+C** to stop w
 ## I don't want to wait — can I load past radar? { #i-dont-want-to-wait-can-i-load-past-radar }
 
 Yes! This is called a **backfill** — it downloads a stretch of older radar so you have
-something to look at immediately. Run this in the project folder, with your own dates:
+something to look at immediately.
+
+**The easy way:** while the page is empty, click **Load recent radar now**. It pulls the
+last 6 hours, shows a progress bar while it works, and the radar appears on its own when
+it's done. No terminal needed. (Only one backfill runs at a time, and it picks up where
+the live collector left off, so clicking it again later never downloads the same frame
+twice.)
+
+**For a specific older window** (a storm last week, a custom range), use the command line.
+Run this in the project folder, with your own dates:
 
 ```bash
 docker compose exec backscatter backscatter backfill --start 2026-06-01T00:00:00Z --end 2026-06-01T06:00:00Z --dry-run
