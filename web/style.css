@@ -216,27 +216,6 @@ body {
   display: none;
 }
 
-/* "New radar available" nudge, top-center under the rangebar. */
-#newbanner {
-  position: absolute;
-  z-index: 2;
-  left: 50%;
-  top: 64px;
-  transform: translateX(-50%);
-  font: 600 12px system-ui, sans-serif;
-  cursor: pointer;
-  border: 0;
-  border-radius: 999px;
-  padding: 6px 14px;
-  background: var(--accent);
-  color: var(--accent-text);
-  box-shadow: 0 2px 12px var(--shadow-banner);
-}
-
-#newbanner[hidden] {
-  display: none;
-}
-
 #rangebar {
   position: absolute;
   z-index: 2;
@@ -605,10 +584,6 @@ body {
     top: 98px;
     left: 8px;
     max-width: 72vw;
-  }
-
-  #newbanner {
-    top: 58px;
   }
 
   /* --- MapLibre zoom control: clear the full-width bar, finger-sized --- */

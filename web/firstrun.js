@@ -37,6 +37,15 @@ function hasNewerFrame(prevMaxIso, currMaxIso) {
 }
 
 /**
+ * When a newer frame lands while on the latest/live view, auto-jump to it ONLY if the
+ * user is parked on the newest frame. If they've scrubbed back, we refresh the list but
+ * keep their position (handled by the caller) — never yank the view.
+ */
+function shouldAutoAdvance(onLatestView, onLastFrame) {
+  return onLatestView && onLastFrame;
+}
+
+/**
  * The live status cue. `fmt(iso)` formats to a local clock string (injected so this
  * stays pure/testable). Honest: only claims active collection when a frame arrived
  * recently; otherwise it says it's still checking rather than over-promising.
@@ -52,5 +61,7 @@ function statusText(maxIso, now, fmt) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { chooseView, shouldPoll, hasNewerFrame, statusText, FRESH_MS };
+  module.exports = {
+    chooseView, shouldPoll, hasNewerFrame, shouldAutoAdvance, statusText, FRESH_MS,
+  };
 }

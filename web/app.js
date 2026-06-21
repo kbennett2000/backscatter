@@ -24,7 +24,6 @@ const spProgress = $("sp-progress");
 const spProgressText = $("sp-progress-text");
 const spProgressFill = $("sp-progress-fill");
 const spError = $("sp-error");
-const newbanner = $("newbanner");
 const rangebar = $("rangebar");
 const timeline = $("timeline");
 const playBtn = $("play");
@@ -463,15 +462,6 @@ function resetBackfillUI() {
   spProgressFill.style.width = "0%";
 }
 
-function showNewBanner() {
-  newbanner.textContent = "● New radar available — click to view";
-  newbanner.hidden = false;
-}
-
-function hideNewBanner() {
-  newbanner.hidden = true;
-}
-
 // --- one-click backfill (Slice 19) ------------------------------------------
 // Kick off a server-side backfill of recent radar, then poll its status and show
 // plain-language progress in the same card. On success the timeline auto-populates;
@@ -615,13 +605,25 @@ async function pollTick() {
   if (!isNew) return;
   if (wasEmpty) {
     await loadDefault(); // first frame landed → show it automatically
-  } else if (state.view === "has-data" && state.window === null) {
-    showNewBanner(); // newer frame while on the live view → offer to jump (no yank)
+    return;
+  }
+  // On the latest/live view a new frame just shows — no "click to view" nudge. If the
+  // user has scrubbed back, refresh the list but keep their frame (never yank).
+  const onLatest = state.view === "has-data" && state.window === null;
+  if (!onLatest) return;
+  const onLast = state.index === state.frames.length - 1;
+  const prevScan = state.frames[state.index] && state.frames[state.index].scan_time;
+  const data = await fetchFrames({});
+  state.window = null;
+  applyFrames(data, { replace: true, jumpTo: "last" });
+  prefillPickerFromLoaded();
+  if (!shouldAutoAdvance(onLatest, onLast) && prevScan) {
+    const i = state.frames.findIndex((f) => f.scan_time === prevScan);
+    if (i >= 0) goTo(i); // restore the user's position instead of jumping to newest
   }
 }
 
 async function loadDefault() {
-  hideNewBanner();
   // No start/cursor -> server returns the most recent frames.
   const data = await fetchFrames({});
   state.window = null;
@@ -630,7 +632,6 @@ async function loadDefault() {
 }
 
 async function loadWindow(startIso, endIso) {
-  hideNewBanner();
   state.window = { start: startIso, end: endIso };
   const data = await fetchFrames({
     start: startIso,
@@ -880,17 +881,12 @@ function wireControls() {
       loadWindow(start, end);
     });
   }
-  // Both the wrong-window "Jump to latest" and the "new radar available" nudge snap
-  // back to the live latest view.
+  // The wrong-window card's "Jump to latest" snaps back to the live latest view.
   spAction.addEventListener("click", () => {
     pause();
     loadDefault();
   });
   spBackfill.addEventListener("click", startBackfill);
-  newbanner.addEventListener("click", () => {
-    pause();
-    loadDefault();
-  });
   // Pause polling when the tab is backgrounded; catch up the moment it returns.
   document.addEventListener("visibilitychange", () => {
     maybePoll();

@@ -8,6 +8,7 @@ const {
   chooseView,
   shouldPoll,
   hasNewerFrame,
+  shouldAutoAdvance,
   statusText,
   FRESH_MS,
 } = require("./firstrun.js");
@@ -34,6 +35,13 @@ test("hasNewerFrame: strictly newer newest-frame", () => {
   assert.equal(hasNewerFrame("2026-06-21T12:05:00Z", "2026-06-21T12:05:00Z"), false);
   assert.equal(hasNewerFrame("2026-06-21T12:05:00Z", "2026-06-21T12:00:00Z"), false);
   assert.equal(hasNewerFrame("2026-06-21T12:00:00Z", null), false);
+});
+
+test("shouldAutoAdvance: only when on latest AND parked on the newest frame", () => {
+  assert.equal(shouldAutoAdvance(true, true), true); // latest + on last → jump to new frame
+  assert.equal(shouldAutoAdvance(true, false), false); // scrubbed back → keep position
+  assert.equal(shouldAutoAdvance(false, true), false); // viewing a history window
+  assert.equal(shouldAutoAdvance(false, false), false);
 });
 
 test("statusText is honest about freshness", () => {
