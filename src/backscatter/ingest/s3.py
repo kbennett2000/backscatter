@@ -24,6 +24,15 @@ S3Client = Any
 BUCKET = "unidata-nexrad-level2"
 REGION = "us-east-1"
 
+# urllib3 connection-pool size for the shared client. Must cover the most
+# concurrent connections any path opens: the chunks active-dir scan fans out
+# across ``chunks._DIR_SCAN_WORKERS`` (32) threads sharing this one client, so a
+# smaller pool (botocore's default is 10) discards+reopens connections every
+# scan, starving the live path. Everything else (chunk fetches, reconcile,
+# archive downloads) is serial, so 32 is the exact ceiling. Guarded by a test
+# asserting this stays >= chunks._DIR_SCAN_WORKERS.
+MAX_POOL_CONNECTIONS = 32
+
 
 def make_client(client: S3Client | None = None) -> S3Client:
     """Return ``client`` if given, else a new unsigned S3 client."""
@@ -32,7 +41,10 @@ def make_client(client: S3Client | None = None) -> S3Client:
     return boto3.client(
         "s3",
         region_name=REGION,
-        config=BotoConfig(signature_version=UNSIGNED),
+        config=BotoConfig(
+            signature_version=UNSIGNED,
+            max_pool_connections=MAX_POOL_CONNECTIONS,
+        ),
     )
 
 
