@@ -187,9 +187,58 @@ body {
   display: none;
 }
 
-#timeline #scrubber {
+#scrubwrap {
+  position: relative;
   flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+#timeline #scrubber {
+  width: 100%;
+  position: relative;
+  z-index: 1;
   cursor: pointer;
+}
+
+/* Gap overlay sits ABOVE the slider's own track (the native track fill would
+   otherwise occlude it) but is non-interactive, so dragging still hits the slider. */
+#gaptrack {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 8px;
+  transform: translateY(-50%);
+  pointer-events: none;
+  z-index: 2;
+}
+
+#gaptrack .gapseg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 4px;
+  border-radius: 2px;
+  /* amber hatch = "missing data here" */
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255, 176, 32, 0.95) 0,
+    rgba(255, 176, 32, 0.95) 3px,
+    rgba(120, 72, 0, 0.95) 3px,
+    rgba(120, 72, 0, 0.95) 6px
+  );
+}
+
+#timeline #gapflag {
+  flex: none;
+  color: #ffb020;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+#timeline #gapflag[hidden] {
+  display: none;
 }
 
 #timeline #play {

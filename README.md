@@ -60,7 +60,11 @@ uv run backscatter backfill KFTG --start 2026-06-01T00:00:00Z --end 2026-06-02T0
 
 `serve` opens a MapLibre map (keyless OpenFreeMap basemap) centered on your
 configured location, with a **timeline scrubber + play/pause** over every frame
-`collect` has accumulated — scrub or loop across the whole archive. With multiple
+`collect` has accumulated — scrub or loop across the whole archive. **Missing-data
+spans** (where collection was down and backfill hasn't filled in) are marked with an
+amber hatch on the scrubber track, and a "⚠ gap before" indicator shows when the
+current frame sits just after one — so playback never silently implies continuity
+across a hole. Playback still runs straight across gaps; the marker is the cue. With multiple
 configured locations, a **location selector** switches the active one (re-centering
 the map and re-pointing the timeline at that location's radar). Locations are
 **managed in the UI** (add / edit / delete / set-default) and persisted in the

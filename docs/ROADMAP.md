@@ -153,6 +153,23 @@ range instead of "latest".
   past range lands frames that scrub in the timeline, a re-run adds nothing, and the
   retention warning fires on a range older than the configured window.
 
+## Slice 13 — Timeline gap indicator
+The scrubber is index-spaced, so a large *time* hole between consecutive frames
+(collect was down, backfill hasn't filled it) looks continuous. Make holes visible —
+frontend-only, derived from the `scan_time`s `/api/frames` already returns (no backend
+change, no new endpoint).
+- **Detection (the testable core):** a gap is any consecutive interval longer than
+  `GAP_FACTOR × median(interval)` over the loaded window (median so the gaps don't
+  inflate the baseline; factor 3). Derived, not a hardcoded 5 min, so normal clear-air
+  spacing isn't flagged but a real ≥30-min hole is. Pure `detectGaps` in `web/gaps.js`,
+  unit-tested with `node --test web/gaps.test.js`.
+- **Display:** amber hatched segments on the scrubber track at each gap step; a
+  "⚠ gap before · 1h 32m" trailing-edge indicator when the current frame sits just
+  after a gap. Markers recompute as paginated windows fill in.
+- **Playback:** marker-only — playback runs **across** gaps, never auto-pauses or skips.
+- **Done when:** a real gap is visibly marked and normal cadence isn't (screenshot
+  gate), and the detection rule passes its unit tests.
+
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher
 - MRMS national composite at low zoom (wide-area context — the *right* way to use

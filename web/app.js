@@ -15,6 +15,8 @@ const rangebar = $("rangebar");
 const timeline = $("timeline");
 const playBtn = $("play");
 const scrubber = $("scrubber");
+const gaptrack = $("gaptrack");
+const gapflag = $("gapflag");
 const frametime = $("frametime");
 const speed = $("speed");
 const startInput = $("start");
@@ -40,6 +42,7 @@ const state = {
   location: null, // active location name (runtime state)
   site: null, // active location's resolved radar
   frames: [],
+  gaps: [], // [{afterIndex, seconds}] missing-data spans in the loaded window
   index: 0,
   playing: false,
   timer: null,
@@ -326,6 +329,9 @@ function applyFrames(data, { replace, jumpTo }) {
   if (state.frames.length === 0) {
     timeline.hidden = true;
     setRadarVisible(false); // don't leave a stale frame from the previous location
+    state.gaps = [];
+    renderGapTrack();
+    gapflag.hidden = true;
     readout.textContent = replace
       ? `${state.location} · no frames in this range.`
       : readout.textContent;
@@ -339,6 +345,10 @@ function applyFrames(data, { replace, jumpTo }) {
   const single = state.frames.length < 2;
   scrubber.disabled = single;
   playBtn.disabled = single;
+  // Recompute gaps over the whole loaded window (replace or paged-in append) so the
+  // track marks where the archive is holey vs continuous.
+  state.gaps = detectGaps(state.frames.map((f) => f.scan_time));
+  renderGapTrack();
 
   if (replace) {
     const i = jumpTo === "first" ? 0 : state.frames.length - 1;
@@ -385,8 +395,37 @@ function goTo(i) {
   scrubber.value = String(state.index);
   frametime.textContent = fmtTime(f.scan_time);
   readoutFor(state.index);
+  updateGapFlag(state.index);
   preloadAround(state.index);
   if (state.index >= state.frames.length - PAGE_FETCH_AHEAD) fetchNextPage();
+}
+
+// Mark each missing-data span on the scrubber track. Markers are %-based, so they
+// stay aligned on resize without JS. A gap between frame i and i+1 sits at step i.
+function renderGapTrack() {
+  gaptrack.innerHTML = "";
+  const span = state.frames.length - 1;
+  if (span < 1) return;
+  for (const g of state.gaps) {
+    const seg = document.createElement("div");
+    seg.className = "gapseg";
+    seg.style.left = `${(g.afterIndex / span) * 100}%`;
+    seg.style.width = `${(1 / span) * 100}%`;
+    seg.title = `missing data · ${fmtDuration(g.seconds)}`;
+    gaptrack.appendChild(seg);
+  }
+}
+
+// Trailing-edge indicator: when the current frame sits just after a gap, say so — the
+// jump you scrubbed/played across wasn't continuous.
+function updateGapFlag(i) {
+  const g = state.gaps.find((x) => x.afterIndex === i - 1);
+  if (g) {
+    gapflag.textContent = `⚠ gap before · ${fmtDuration(g.seconds)}`;
+    gapflag.hidden = false;
+  } else {
+    gapflag.hidden = true;
+  }
 }
 
 function readoutFor(i) {

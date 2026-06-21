@@ -47,7 +47,11 @@
     </div>
     <div id="timeline" hidden>
       <button id="play" type="button" aria-label="Play/pause">▶</button>
-      <input id="scrubber" type="range" min="0" max="0" value="0" step="1" />
+      <div id="scrubwrap">
+        <div id="gaptrack" aria-hidden="true"></div>
+        <input id="scrubber" type="range" min="0" max="0" value="0" step="1" />
+      </div>
+      <span id="gapflag" hidden></span>
       <span id="frametime">—</span>
       <select id="speed" aria-label="Playback speed">
         <option value="1000">1 fps</option>
@@ -61,6 +65,7 @@
       Basemap © OpenMapTiles © OpenStreetMap contributors via OpenFreeMap
     </div>
     <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+    <script src="/static/gaps.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>
