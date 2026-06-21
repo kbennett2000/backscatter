@@ -327,7 +327,24 @@ path only touches the basemap, CSS chrome, and pin paint).
 - Pure `web/theme.js` (resolveInitialTheme/nextTheme/basemapFor), node --test'd like
   firstrun.js. One dark-mode screenshot added to the docs.
 
+## Slice 22 — Mobile UX overhaul
+Make the app genuinely usable on a phone (portrait, 360–430px) without changing the desktop
+layout. Pure responsive layout/CSS — no features, no rendering/data/backend change.
+- **One breakpoint:** a single `@media (max-width: 600px)` block carries the whole mobile
+  treatment; desktop (≥601px) is untouched.
+- **Window-controls drawer:** the time-window controls (label, start/end, Load, 6h/24h,
+  Latest, extent) move into a `#windowctl` group that is `display:contents` (inline) on
+  desktop and a dropdown **drawer** on mobile behind a `🕘 Window` toggle. The top bar goes
+  slim/full-width (Locations collapses to its ⚙ icon); readout + status drop below it.
+- **Touch + fit:** finger-sized targets (≥40px), enlarged MapLibre zoom moved clear of the
+  bar, full-width timeline with the gap-flag on its own row, first-run/Locations panels fit
+  (the latter scrolls). Button clarity folded in (labeled, headed drawer).
+- Pure `web/layout.js` (`isMobile`/`BREAKPOINT`) node --test'd; app.js wires the drawer
+  toggle + resize auto-close. Verified on a 390×844 phone viewport and a real device.
+
 ## Later (not scheduled yet)
+- **Storm track lines / motion vectors** — parked as a real computer-vision effort (cell
+  identification + tracking across frames), not a quick slice.
 - Velocity and dual-pol products; product switcher
 - MRMS national composite at low zoom (wide-area context — the *right* way to use
   multiple radars; see ADR-0005)
