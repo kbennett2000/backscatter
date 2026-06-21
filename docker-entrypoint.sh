@@ -14,6 +14,25 @@ term() {
 }
 trap term TERM INT
 
+# Fail fast with a clear, actionable message if the archive directory isn't writable by
+# us. The committed data/.gitkeep normally prevents this, but if ./data was created by
+# root on the host (e.g. Docker auto-created the bind-mount source before it existed)
+# the non-root container can't write the SQLite DB — which otherwise shows up as a
+# cryptic "unable to open database file" crash-loop.
+data_dir="${BACKSCATTER_DATA_DIR:-/data}"
+if ! { mkdir -p "$data_dir" && touch "$data_dir/.write_test"; } 2>/dev/null; then
+  uid="$(id -u)"; gid="$(id -g)"
+  {
+    echo "ERROR: cannot write to the archive directory ($data_dir)."
+    echo "It is likely owned by root on the host, but this container runs as UID ${uid}."
+    echo "Fix it once on the host (in the project folder), then start again:"
+    echo "    sudo chown -R ${uid}:${gid} ./data"
+    echo "    docker compose up -d"
+  } >&2
+  exit 1
+fi
+rm -f "$data_dir/.write_test"
+
 # The served (and published) port — one value, from the environment.
 port="${BACKSCATTER_PORT:-8085}"
 

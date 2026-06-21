@@ -11,8 +11,12 @@ dist/
 .pytest_cache/
 .ruff_cache/
 
-# backscatter data — never commit radar volumes, rendered tiles, or the index DB
-data/
+# backscatter data — never commit radar volumes, rendered tiles, or the index DB, but
+# DO keep an empty data/ dir (via data/.gitkeep). A fresh clone then already has it owned
+# by you; otherwise Docker creates the bind-mount source as root and the non-root
+# container can't write the DB (see docs Help & FAQ).
+/data/*
+!/data/.gitkeep
 tiles/
 *.db
 *.sqlite

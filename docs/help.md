@@ -44,6 +44,29 @@ keep it short to start — a few hours downloads quickly.
     (30 days by default), backscatter will warn you that it'll be cleaned up again on the
     next tidy-up. Raise `BACKSCATTER_RETENTION_DAYS` if you want to keep older stuff.
 
+## "unable to open database file" / the container keeps restarting
+
+If `docker compose logs` shows **`sqlite3.OperationalError: unable to open database
+file`** and the container restarts over and over, the **`data` folder is owned by
+`root`** while backscatter runs as your normal user — so it can't write its database.
+
+This happens on Linux if the `data` folder didn't exist when you first ran
+`docker compose up`: Docker creates it owned by `root`. (Fresh copies of backscatter now
+include an empty `data` folder so this shouldn't happen — but if you cloned an older
+version, or deleted the folder, you can hit it.)
+
+Fix it once, in the project folder:
+
+```bash
+sudo chown -R 1000:1000 ./data
+docker compose up -d
+```
+
+`1000:1000` is the default user. If you set `PUID`/`PGID` in your `.env` to different
+numbers (because your `id -u` / `id -g` differ), use **those** numbers instead — e.g.
+`sudo chown -R 1001:1001 ./data`. backscatter also prints this exact command in its logs
+when it detects the problem, so you can copy it from there.
+
 ## It says Docker isn't running / "cannot connect to the Docker daemon"
 
 backscatter runs inside Docker, so Docker has to be on:
