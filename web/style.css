@@ -488,3 +488,190 @@ body {
 #timeline #speed {
   flex: none;
 }
+
+/* ===========================================================================
+   Mobile treatment (Slice 22). Below 600px the desktop layout above is replaced:
+   the map stays primary, the control bar goes slim with the time-window controls
+   behind a drawer, the readout drops below the bar, and the timeline + touch
+   targets are sized for fingers. Desktop (≥601px) is untouched. Colors still come
+   from the theme vars, so this works in light and dark.
+   =========================================================================== */
+@media (max-width: 600px) {
+  /* --- top: slim, full-width control bar --- */
+  #rangebar {
+    left: 8px;
+    right: 8px;
+    top: 8px;
+    transform: none;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    gap: 6px;
+    padding: 6px 8px;
+  }
+
+  #rangebar button,
+  #rangebar select {
+    min-height: 40px; /* finger-sized touch targets */
+    font-size: 14px;
+  }
+
+  #rangebar #theme {
+    width: 40px;
+    font-size: 15px;
+  }
+
+  /* Collapse the Locations button to its icon; the label returns on desktop. */
+  #rangebar #manage .btnlabel {
+    display: none;
+  }
+
+  #rangebar #locwrap .muted {
+    display: none; /* drop the "location:" label, keep the select */
+  }
+
+  #rangebar #locwrap select {
+    max-width: 38vw;
+  }
+
+  /* The window/time toggle appears, pushed to the right edge of the bar. */
+  #rangebar #wintoggle {
+    display: inline-block;
+    margin-left: auto;
+    white-space: nowrap;
+  }
+
+  /* The window controls become a dropdown drawer hanging below the bar. Row-wrap with
+     per-item flex-basis: inputs/Load take full rows; 6h/24h/Latest share one row. */
+  #windowctl {
+    display: none; /* overrides display:contents */
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    z-index: 4;
+    flex-flow: row wrap;
+    align-items: stretch;
+    gap: 8px;
+    padding: 12px;
+    background: var(--chrome-bg);
+    color: var(--chrome-text);
+    border-radius: 8px;
+    box-shadow: 0 6px 30px var(--shadow-card);
+  }
+
+  #windowctl.open {
+    display: flex;
+  }
+
+  #windowctl .wintitle {
+    flex: 1 1 100%;
+    font-weight: 600;
+    opacity: 1;
+  }
+
+  #windowctl input,
+  #windowctl #load {
+    flex: 1 1 100%;
+    min-height: 40px;
+    font-size: 15px;
+  }
+
+  #windowctl .preset,
+  #windowctl #latest {
+    flex: 1 1 28%;
+    min-height: 40px;
+    font-size: 15px;
+  }
+
+  #windowctl #extent {
+    flex: 1 1 100%;
+    text-align: center;
+  }
+
+  /* The "→" between the two date inputs is meaningless when stacked. */
+  #windowctl > .muted:not(.wintitle):not(#extent) {
+    display: none;
+  }
+
+  /* --- readout + status: below the slim bar, top-left, allowed to wrap --- */
+  #readout {
+    top: 56px;
+    left: 8px;
+    max-width: 72vw;
+    font-size: 12px;
+  }
+
+  #status {
+    top: 98px;
+    left: 8px;
+    max-width: 72vw;
+  }
+
+  #newbanner {
+    top: 58px;
+  }
+
+  /* --- MapLibre zoom control: clear the full-width bar, finger-sized --- */
+  .maplibregl-ctrl-top-right {
+    top: 52px;
+  }
+
+  .maplibregl-ctrl-group button {
+    width: 38px;
+    height: 38px;
+  }
+
+  /* --- bottom: full-width, usable timeline --- */
+  #timeline {
+    left: 6px;
+    right: 6px;
+    width: auto;
+    transform: none;
+    bottom: 22px;
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    padding: 8px 10px;
+  }
+
+  #timeline #play {
+    width: 44px;
+    height: 40px;
+    font-size: 15px;
+  }
+
+  #timeline #frametime {
+    min-width: 7ch;
+    font-size: 12px;
+  }
+
+  #timeline #speed {
+    min-height: 40px;
+  }
+
+  /* The gap flag, when present, drops to its own full-width row instead of crowding. */
+  #timeline #gapflag {
+    flex: 1 1 100%;
+    order: 5;
+  }
+
+  /* --- first-run / locations panels fit the viewport --- */
+  #statepanel {
+    width: 92vw;
+    padding: 18px 18px;
+  }
+
+  #locpanel {
+    top: 56px;
+    width: 94vw;
+    max-height: 72vh;
+    overflow-y: auto;
+  }
+
+  #credit {
+    font-size: 9px;
+    max-width: 96vw;
+    padding: 3px 6px;
+    bottom: 4px;
+    right: 4px;
+  }
+}
