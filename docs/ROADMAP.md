@@ -342,6 +342,29 @@ layout. Pure responsive layout/CSS — no features, no rendering/data/backend ch
 - Pure `web/layout.js` (`isMobile`/`BREAKPOINT`) node --test'd; app.js wires the drawer
   toggle + resize auto-close. Verified on a 390×844 phone viewport and a real device.
 
+## Slice 23 — Small UX wins (display-only)
+Four self-contained frontend improvements; no backend/render/data change. (Two siblings —
+clear-air hide + palette toggle — were split out to Slice 24, see below.)
+- **Local time** in the picker + extent. The `datetime-local` conversions were treating the
+  value as UTC; fixed via the `Date` object in a pure `web/timefmt.js` so a picked local time
+  maps to the correct UTC instant for the API (storage/queries stay UTC — verified round-trip
+  in a non-UTC tz: 12:00 MDT → `18:00Z` → right frames). Label "(UTC)" dropped to "window:".
+  Uses the browser tz (= the location's for a user in that zone).
+- **Auto-advance** replaces the "● New radar available" nudge: on the live view a new frame
+  just shows; if you've scrubbed back, the list refreshes but your frame is kept (no yank).
+- **Radar opacity slider** (0.1–1.0, default 0.8) in a new Display settings section, live +
+  persisted.
+- **Keyless basemap switcher** — liberty / bright / positron / dark / fiord (all keyless
+  OpenFreeMap); chrome derived from the style; ☀/☾ kept as a shortcut; old theme pref
+  migrated. No satellite/terrain (none keyless). theme.js generalized to a `STYLES` registry.
+
+## Slice 24 — Client-side recolor: clear-air hide + palette toggle (queued)
+Approved/queued. The radar palette is 15 discrete buckets, so the colored PNG is losslessly
+invertible to a bucket index — both features can be done **client-side, no re-render, no
+backend**, by recoloring the source PNG in a canvas (RGB→bucket→drop-low-buckets for
+clear-air / remap-to-other-ramp for a RadarScope-style palette). Shared canvas-LUT pipeline +
+a visual-correctness pass; its own slice rather than bloating Slice 23.
+
 ## Later (not scheduled yet)
 - **Storm track lines / motion vectors** — parked as a real computer-vision effort (cell
   identification + tracking across frames), not a quick slice.
