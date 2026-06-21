@@ -80,6 +80,13 @@
         <button id="lf-reset" type="button">Clear</button>
         <div id="locerror" class="err"></div>
       </form>
+      <div id="displaysettings">
+        <h3>Display</h3>
+        <label class="setting"
+          ><span>Radar opacity</span>
+          <input id="opacity" type="range" min="0.1" max="1" step="0.05"
+        /></label>
+      </div>
     </div>
     <div id="timeline" hidden>
       <button id="play" type="button" aria-label="Play/pause">▶</button>
@@ -107,6 +114,7 @@
     <script src="/static/backfill.js"></script>
     <script src="/static/layout.js"></script>
     <script src="/static/timefmt.js"></script>
+    <script src="/static/prefs.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>

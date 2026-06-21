@@ -370,6 +370,35 @@ body {
   min-height: 1em;
 }
 
+/* Display settings (radar opacity, basemap) live below the Locations form. */
+#displaysettings {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-strong);
+}
+
+#displaysettings h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+#displaysettings .setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+#displaysettings .setting input[type="range"] {
+  flex: 1;
+  max-width: 60%;
+}
+
+#displaysettings .setting select {
+  font: inherit;
+}
+
 #timeline {
   position: absolute;
   z-index: 2;

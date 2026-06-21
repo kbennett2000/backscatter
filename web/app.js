@@ -11,6 +11,7 @@ const PAGE_SIZE = 20; // frames per request when paging an explicit window
 const PAGE_FETCH_AHEAD = 3; // fetch the next page when this close to the end
 const LS_KEY = "backscatter.location"; // last-selected location, across reloads
 const LS_THEME = "backscatter.theme"; // last-chosen light/dark, across reloads
+const LS_OPACITY = "backscatter.opacity"; // radar layer opacity, across reloads
 
 const $ = (id) => document.getElementById(id);
 const readout = $("readout");
@@ -41,6 +42,7 @@ const manageBtn = $("manage");
 const themeBtn = $("theme");
 const winToggle = $("wintoggle");
 const windowctl = $("windowctl");
+const opacityInput = $("opacity");
 const locpanel = $("locpanel");
 const loclist = $("loclist");
 const locform = $("locform");
@@ -66,6 +68,7 @@ const state = {
   editingId: null, // location id being edited, or null in add mode
   picking: false, // map-click sets the form's lat/lon
   layerReady: false,
+  opacity: clampOpacity(localStorage.getItem(LS_OPACITY)), // radar layer opacity
   extent: { min: null, max: null, count: 0 },
   view: "has-data", // 'has-data' | 'wrong-window' | 'empty' (first-run state)
   pollTimer: null, // setInterval handle for the new-frame poll
@@ -725,7 +728,7 @@ function ensureLayer(frame) {
       id: RADAR_LAYER,
       type: "raster",
       source: RADAR_SOURCE,
-      paint: { "raster-opacity": 0.8 },
+      paint: { "raster-opacity": state.opacity },
     },
     below,
   );
@@ -833,6 +836,19 @@ function wireControls() {
     }
   });
   themeBtn.addEventListener("click", () => applyTheme(nextTheme(currentTheme())));
+  // Radar opacity: live setPaintProperty + persist.
+  opacityInput.value = String(state.opacity);
+  opacityInput.addEventListener("input", () => {
+    state.opacity = clampOpacity(opacityInput.value);
+    if (state.layerReady) {
+      state.map.setPaintProperty(RADAR_LAYER, "raster-opacity", state.opacity);
+    }
+    try {
+      localStorage.setItem(LS_OPACITY, String(state.opacity));
+    } catch (e) {
+      /* storage disabled — applies for this session */
+    }
+  });
   // Mobile-only: the window/time controls live in a drawer toggled by this button.
   winToggle.addEventListener("click", () => {
     const open = nextOpen(windowctl.classList.contains("open"));
