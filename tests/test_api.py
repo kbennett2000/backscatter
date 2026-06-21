@@ -12,19 +12,22 @@ from PIL import Image
 
 from backscatter.api.app import create_app
 from backscatter.api.frames import latest_frame
-from backscatter.config import Config, Location
+from backscatter.config import Config, SeedLocation
 from backscatter.store import db
 
 BOUNDS = (-107.23, 37.71, -101.86, 41.86)  # west, south, east, north
 
+_OKC = SeedLocation("OKC", 35.4676, -97.5164, False)  # -> KTLX
 
-def _config(tmp_path: Path, *, extra: tuple[Location, ...] = ()) -> Config:
-    home = Location("Home", 39.3603, -104.5969, "KFTG", True, False)
+
+def _config(tmp_path: Path, *, extra: tuple[SeedLocation, ...] = ()) -> Config:
+    home = SeedLocation("Home", 39.3603, -104.5969, True)
     return Config(
-        locations=(home, *extra),
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "backscatter.db",
         poll_interval_s=60.0,
+        site_override=None,
+        seed_locations=(home, *extra),
     )
 
 
@@ -73,11 +76,11 @@ def test_latest_frame_none_when_empty(tmp_path: Path) -> None:
     assert latest_frame(conn) is None
 
 
-def test_api_config_uses_config_center(tmp_path: Path) -> None:
-    config = _config(tmp_path)
+def test_api_config_uses_default_location_center(tmp_path: Path) -> None:
+    config = _config(tmp_path)  # Home at Elizabeth, CO
     client = TestClient(create_app(config))
     body = client.get("/api/config").json()
-    assert body["center"] == [config.lon, config.lat]
+    assert body["center"] == [-104.5969, 39.3603]  # [lon, lat]
     assert body["site"] == "KFTG"
 
 
@@ -286,18 +289,16 @@ def test_frames_window_empty_range_has_null_cursor(tmp_path: Path) -> None:
     assert body["next_cursor"] is None
 
 
-# --- Slice 8: multiple locations ---------------------------------------------
-
-_OKC = Location("OKC", 35.4676, -97.5164, "KTLX", False, False)
+# --- locations: read (seeded into the store on first create_app) -------------
 
 
 def test_api_locations(tmp_path: Path) -> None:
     config = _config(tmp_path, extra=(_OKC,))
     body = TestClient(create_app(config)).get("/api/locations").json()
     assert body["locations"] == [
-        {"name": "Home", "lat": 39.3603, "lon": -104.5969,
+        {"id": 1, "name": "Home", "lat": 39.3603, "lon": -104.5969,
          "default": True, "site": "KFTG"},
-        {"name": "OKC", "lat": 35.4676, "lon": -97.5164,
+        {"id": 2, "name": "OKC", "lat": 35.4676, "lon": -97.5164,
          "default": False, "site": "KTLX"},
     ]
 
@@ -330,3 +331,103 @@ def test_api_latest_is_site_scoped_to_home(tmp_path: Path) -> None:
 
     assert client.get("/api/latest").json()["site"] == "KFTG"  # Home
     assert client.get("/api/latest?location=OKC").json()["site"] == "KTLX"
+
+
+# --- locations: write (CRUD) -------------------------------------------------
+
+
+def _names(client: TestClient) -> list[str]:
+    return [loc["name"] for loc in client.get("/api/locations").json()["locations"]]
+
+
+def test_create_location(tmp_path: Path) -> None:
+    client = TestClient(create_app(_config(tmp_path)))
+    resp = client.post(
+        "/api/locations", json={"name": "OKC", "lat": 35.4676, "lon": -97.5164}
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["name"] == "OKC" and body["site"] == "KTLX" and body["default"] is False
+    assert _names(client) == ["Home", "OKC"]
+
+
+def test_create_duplicate_name_400(tmp_path: Path) -> None:
+    client = TestClient(create_app(_config(tmp_path)))
+    resp = client.post(
+        "/api/locations", json={"name": "home", "lat": 1, "lon": 2}
+    )
+    assert resp.status_code == 400
+    assert "already exists" in resp.json()["detail"]
+
+
+def test_create_as_default_demotes_previous(tmp_path: Path) -> None:
+    client = TestClient(create_app(_config(tmp_path)))
+    client.post(
+        "/api/locations",
+        json={"name": "OKC", "lat": 35.4676, "lon": -97.5164, "default": True},
+    )
+    locs = {loc["name"]: loc["default"] for loc in
+            client.get("/api/locations").json()["locations"]}
+    assert locs == {"OKC": True, "Home": False}
+
+
+def test_update_location_recomputes_site(tmp_path: Path) -> None:
+    config = _config(tmp_path, extra=(_OKC,))
+    client = TestClient(create_app(config))
+    # Move OKC (id 2) to Chicago -> site should re-resolve to KLOT.
+    resp = client.put("/api/locations/2", json={"lat": 41.8781, "lon": -87.6298})
+    assert resp.status_code == 200
+    assert resp.json()["site"] == "KLOT"
+
+
+def test_set_default_via_update(tmp_path: Path) -> None:
+    config = _config(tmp_path, extra=(_OKC,))
+    client = TestClient(create_app(config))
+    client.put("/api/locations/2", json={"default": True})  # OKC becomes default
+    locs = {loc["name"]: loc["default"] for loc in
+            client.get("/api/locations").json()["locations"]}
+    assert locs == {"OKC": True, "Home": False}
+
+
+def test_delete_location(tmp_path: Path) -> None:
+    config = _config(tmp_path, extra=(_OKC,))
+    client = TestClient(create_app(config))
+    assert client.delete("/api/locations/2").status_code == 204  # OKC (non-default)
+    assert _names(client) == ["Home"]
+
+
+def test_delete_default_rejected(tmp_path: Path) -> None:
+    config = _config(tmp_path, extra=(_OKC,))
+    client = TestClient(create_app(config))
+    resp = client.delete("/api/locations/1")  # Home is the default
+    assert resp.status_code == 400
+    assert "default" in resp.json()["detail"]
+    assert _names(client) == ["Home", "OKC"]  # nothing deleted
+
+
+def test_delete_last_location_rejected(tmp_path: Path) -> None:
+    client = TestClient(create_app(_config(tmp_path)))  # only Home
+    resp = client.delete("/api/locations/1")
+    assert resp.status_code == 400
+    assert "only location" in resp.json()["detail"]
+
+
+def test_update_missing_location_404(tmp_path: Path) -> None:
+    client = TestClient(create_app(_config(tmp_path)))
+    resp = client.put("/api/locations/999", json={"lat": 1, "lon": 2})
+    assert resp.status_code == 404
+
+
+def test_store_wins_over_env_on_restart(tmp_path: Path) -> None:
+    # First app seeds Home from env and adds OKC.
+    config = _config(tmp_path)
+    client = TestClient(create_app(config))
+    client.post("/api/locations", json={"name": "OKC", "lat": 35.4676, "lon": -97.5164})
+    # A second app over the same DB (even with a different seed) must NOT re-seed.
+    config2 = Config(
+        data_dir=config.data_dir, db_path=config.db_path, poll_interval_s=60.0,
+        site_override=None,
+        seed_locations=(SeedLocation("Somewhere", 47.6, -122.3, True),),
+    )
+    client2 = TestClient(create_app(config2))
+    assert _names(client2) == ["Home", "OKC"]  # DB wins; the new seed is ignored
