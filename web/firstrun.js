@@ -45,23 +45,34 @@ function shouldAutoAdvance(onLatestView, onLastFrame) {
   return onLatestView && onLastFrame;
 }
 
+/** Whether the view is tracking the newest frame (drives the "● Live" badge). */
+function isLiveView(view, hasExplicitWindow, onLastFrame) {
+  return view === "has-data" && !hasExplicitWindow && onLastFrame;
+}
+
 /**
- * The live status cue. `fmt(iso)` formats to a local clock string (injected so this
- * stays pure/testable). Honest: only claims active collection when a frame arrived
- * recently; otherwise it says it's still checking rather than over-promising.
+ * The live status cue. Shows the newest frame's age in plain language so the real
+ * source lag (~5 min from the assembled bucket) reads honestly — not as a freeze. A
+ * "● Live" badge means the view is tracking newest. `fmtAge(iso)` formats the relative
+ * age (injected so this stays pure/testable).
  * @param {string|null} maxIso - the archive's newest scan_time, or null if empty.
  * @param {number} now - current time in epoch ms.
- * @param {(iso:string)=>string} fmt
+ * @param {boolean} live - whether the view is tracking the newest frame.
+ * @param {(iso:string)=>string} fmtAge - e.g. iso => "6 min ago".
  */
-function statusText(maxIso, now, fmt) {
+function statusText(maxIso, now, live, fmtAge) {
   if (!maxIso) return "Collecting — waiting for the first frame…";
-  const t = fmt(maxIso);
-  if (now - Date.parse(maxIso) <= FRESH_MS) return `Collecting · last frame ${t}`;
-  return `Last frame ${t} · checking for new radar…`;
+  const age = fmtAge(maxIso);
+  if (now - Date.parse(maxIso) <= FRESH_MS) {
+    return live ? `● Live · last frame ${age}` : `Last frame ${age}`;
+  }
+  // Older than ~15 min: collection may be behind — say so, don't claim "Live".
+  return `Last frame ${age} · checking for new radar…`;
 }
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    chooseView, shouldPoll, hasNewerFrame, shouldAutoAdvance, statusText, FRESH_MS,
+    chooseView, shouldPoll, hasNewerFrame, shouldAutoAdvance, isLiveView,
+    statusText, FRESH_MS,
   };
 }

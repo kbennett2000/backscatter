@@ -6,7 +6,21 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { isoToLocalInput, localInputToIso } = require("./timefmt.js");
+const { isoToLocalInput, localInputToIso, relativeAge } = require("./timefmt.js");
+
+test("relativeAge: plain-language, floored, never overstates freshness", () => {
+  const base = "2026-06-21T12:00:00Z";
+  const t = Date.parse(base);
+  assert.equal(relativeAge(base, t), "just now"); // 0s
+  assert.equal(relativeAge(base, t + 30_000), "just now"); // 30s
+  assert.equal(relativeAge(base, t + 59_000), "just now"); // <1 min
+  assert.equal(relativeAge(base, t + 60_000), "1 min ago"); // exactly 1 min
+  assert.equal(relativeAge(base, t + 6.5 * 60_000), "6 min ago"); // floored, not 7
+  assert.equal(relativeAge(base, t + 59 * 60_000), "59 min ago");
+  assert.equal(relativeAge(base, t + 60 * 60_000), "1 hr ago");
+  assert.equal(relativeAge(base, t + 25 * 3600_000), "1 d ago");
+  assert.equal(relativeAge(base, t - 5000), "just now"); // future / clock skew
+});
 
 test("round-trip: UTC instant → local input → UTC is lossless to the minute", () => {
   for (const z of [

@@ -9,6 +9,7 @@ const {
   shouldPoll,
   hasNewerFrame,
   shouldAutoAdvance,
+  isLiveView,
   statusText,
   FRESH_MS,
 } = require("./firstrun.js");
@@ -44,19 +45,30 @@ test("shouldAutoAdvance: only when on latest AND parked on the newest frame", ()
   assert.equal(shouldAutoAdvance(false, false), false);
 });
 
-test("statusText is honest about freshness", () => {
-  const fmt = () => "12:56 PM";
+test("isLiveView: tracking newest = has-data, no explicit window, on last frame", () => {
+  assert.equal(isLiveView("has-data", false, true), true);
+  assert.equal(isLiveView("has-data", false, false), false); // scrubbed back
+  assert.equal(isLiveView("has-data", true, true), false); // explicit history window
+  assert.equal(isLiveView("empty", false, true), false);
+});
+
+test("statusText shows honest age + a Live badge only when tracking newest", () => {
+  const age = () => "6 min ago";
   const max = "2026-06-21T18:56:00Z";
   const t = Date.parse(max);
 
-  assert.equal(statusText(null, t, fmt), "Collecting — waiting for the first frame…");
   assert.equal(
-    statusText(max, t + 5 * 60 * 1000, fmt),
-    "Collecting · last frame 12:56 PM", // 5 min old → fresh
+    statusText(null, t, true, age),
+    "Collecting — waiting for the first frame…",
   );
-  assert.equal(statusText(max, t + FRESH_MS, fmt), "Collecting · last frame 12:56 PM");
+  // fresh + live → Live badge
+  assert.equal(statusText(max, t + 6 * 60000, true, age), "● Live · last frame 6 min ago");
+  // fresh but scrubbed back → no badge, just the age
+  assert.equal(statusText(max, t + 6 * 60000, false, age), "Last frame 6 min ago");
+  assert.equal(statusText(max, t + FRESH_MS, true, age), "● Live · last frame 6 min ago");
+  // stale (> 15 min) → never claims Live
   assert.equal(
-    statusText(max, t + 20 * 60 * 1000, fmt),
-    "Last frame 12:56 PM · checking for new radar…", // 20 min old → stale
+    statusText(max, t + 20 * 60000, true, age),
+    "Last frame 6 min ago · checking for new radar…",
   );
 });

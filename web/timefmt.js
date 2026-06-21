@@ -36,6 +36,26 @@ function fmtLocalDateTime(iso) {
   });
 }
 
+/**
+ * Plain-language age of an instant relative to `now` (epoch ms): "just now",
+ * "N min ago", "N hr ago", "N d ago". Floors each unit, so it never overstates
+ * freshness (a 6½-min-old frame reads "6 min ago", never "7"). A future/clock-skewed
+ * instant reads "just now".
+ */
+function relativeAge(iso, now) {
+  const diff = now - Date.parse(iso);
+  if (diff < 60000) return "just now"; // < 1 min (and any negative skew)
+  if (diff < 3600000) return `${Math.floor(diff / 60000)} min ago`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)} hr ago`;
+  return `${Math.floor(diff / 86400000)} d ago`;
+}
+
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { isoToLocalInput, localInputToIso, fmtLocalTime, fmtLocalDateTime };
+  module.exports = {
+    isoToLocalInput,
+    localInputToIso,
+    fmtLocalTime,
+    fmtLocalDateTime,
+    relativeAge,
+  };
 }

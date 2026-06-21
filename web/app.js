@@ -425,9 +425,18 @@ function applyExtent(r) {
   updateStatus();
 }
 
-// The always-visible "is the engine alive" cue (plain language, local time).
+// The always-visible freshness cue: the newest frame's age in plain language, with a
+// "● Live" badge when the view is tracking newest. Tapping it jumps to latest (wired in
+// wireControls) — the reachable "go live" affordance on mobile, where Latest is otherwise
+// inside the Window drawer.
 function updateStatus() {
-  statusEl.textContent = statusText(state.extent.max, Date.now(), fmtLocalTime);
+  const now = Date.now();
+  const onLast =
+    state.frames.length > 0 && state.index === state.frames.length - 1;
+  const live = isLiveView(state.view, state.window !== null, onLast);
+  statusEl.textContent = statusText(state.extent.max, now, live, (iso) =>
+    relativeAge(iso, now),
+  );
   statusEl.hidden = false;
 }
 
