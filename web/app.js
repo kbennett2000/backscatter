@@ -90,37 +90,15 @@ function cornersFromBounds(b) {
   ];
 }
 
-function fmtTime(iso) {
-  return iso.replace("T", " ").replace(/(\+00:00|Z)$/, "Z");
-}
-
-// Local-time formatters for the readout + status/messages (the time-picker stays UTC).
-function fmtLocalTime(iso) {
-  return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
-function fmtLocalDateTime(iso) {
-  return new Date(iso).toLocaleString([], {
-    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-  });
-}
+// Time helpers (isoToLocalInput / localInputToIso / fmtLocalTime / fmtLocalDateTime) are
+// pure functions in timefmt.js, loaded before this script. Everything shown/entered is
+// local; storage/queries stay UTC.
 
 function escapeHtml(s) {
   return String(s).replace(
     /[&<>"']/g,
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
   );
-}
-
-// "2026-06-20T23:06:51+00:00" -> "2026-06-20T23:06" for datetime-local inputs.
-function toLocalInput(iso) {
-  return iso.slice(0, 16);
-}
-
-// datetime-local value (UTC) -> ISO with explicit Z.
-function inputToIso(value) {
-  if (!value) return null;
-  return value.length === 16 ? `${value}:00Z` : `${value}Z`;
 }
 
 function isoMinusHours(iso, hours) {
@@ -418,9 +396,10 @@ async function refreshExtent() {
 function applyExtent(r) {
   state.extent = { min: r.min, max: r.max, count: r.count };
   if (r.min && r.max) {
-    startInput.min = endInput.min = toLocalInput(r.min);
-    startInput.max = endInput.max = toLocalInput(r.max);
-    extentLabel.textContent = `archive: ${fmtTime(r.min)} – ${fmtTime(r.max)} (${r.count})`;
+    startInput.min = endInput.min = isoToLocalInput(r.min);
+    startInput.max = endInput.max = isoToLocalInput(r.max);
+    extentLabel.textContent =
+      `archive: ${fmtLocalDateTime(r.min)} – ${fmtLocalDateTime(r.max)} (${r.count})`;
   }
   updateStatus();
 }
@@ -817,8 +796,8 @@ function preloadAround(i) {
 
 function prefillPickerFromLoaded() {
   if (state.frames.length === 0) return;
-  startInput.value = toLocalInput(state.frames[0].scan_time);
-  endInput.value = toLocalInput(state.frames[state.frames.length - 1].scan_time);
+  startInput.value = isoToLocalInput(state.frames[0].scan_time);
+  endInput.value = isoToLocalInput(state.frames[state.frames.length - 1].scan_time);
 }
 
 function play() {
@@ -882,8 +861,8 @@ function wireControls() {
   });
   $("load").addEventListener("click", () => {
     pause();
-    const s = inputToIso(startInput.value);
-    const e = inputToIso(endInput.value);
+    const s = localInputToIso(startInput.value);
+    const e = localInputToIso(endInput.value);
     if (s && e) loadWindow(s, e);
   });
   $("latest").addEventListener("click", () => {
@@ -896,8 +875,8 @@ function wireControls() {
       pause();
       const end = state.extent.max;
       const start = isoMinusHours(end, Number(btn.dataset.hours));
-      startInput.value = toLocalInput(start);
-      endInput.value = toLocalInput(end);
+      startInput.value = isoToLocalInput(start);
+      endInput.value = isoToLocalInput(end);
       loadWindow(start, end);
     });
   }
