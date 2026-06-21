@@ -1,6 +1,6 @@
 "use strict";
 
-// Basemap style URLs (keyless OpenFreeMap, light/dark) come from theme.js `basemapFor`.
+// Basemap style URLs (keyless OpenFreeMap) + chrome come from theme.js `STYLES`.
 const RADAR_SOURCE = "radar-frame";
 const RADAR_LAYER = "radar-frame-layer";
 const LOC_SOURCE = "locations"; // GeoJSON source feeding the location pins
@@ -10,7 +10,8 @@ const PRELOAD_AHEAD = 3; // warm the next few PNGs so playback doesn't jank
 const PAGE_SIZE = 20; // frames per request when paging an explicit window
 const PAGE_FETCH_AHEAD = 3; // fetch the next page when this close to the end
 const LS_KEY = "backscatter.location"; // last-selected location, across reloads
-const LS_THEME = "backscatter.theme"; // last-chosen light/dark, across reloads
+const LS_THEME = "backscatter.theme"; // Slice-21 light/dark pref (migrated → basemap)
+const LS_BASEMAP = "backscatter.basemap"; // chosen map style key, across reloads
 const LS_OPACITY = "backscatter.opacity"; // radar layer opacity, across reloads
 
 const $ = (id) => document.getElementById(id);
@@ -43,6 +44,7 @@ const themeBtn = $("theme");
 const winToggle = $("wintoggle");
 const windowctl = $("windowctl");
 const opacityInput = $("opacity");
+const basemapSelect = $("basemap");
 const locpanel = $("locpanel");
 const loclist = $("loclist");
 const locform = $("locform");
@@ -69,6 +71,11 @@ const state = {
   picking: false, // map-click sets the form's lat/lon
   layerReady: false,
   opacity: clampOpacity(localStorage.getItem(LS_OPACITY)), // radar layer opacity
+  basemap: resolveInitialBasemap(
+    localStorage.getItem(LS_BASEMAP) || localStorage.getItem(LS_THEME),
+    window.matchMedia &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches,
+  ),
   extent: { min: null, max: null, count: 0 },
   view: "has-data", // 'has-data' | 'wrong-window' | 'empty' (first-run state)
   pollTimer: null, // setInterval handle for the new-frame poll
@@ -240,10 +247,10 @@ async function main() {
   state.site = active.site;
   populateSelector(active.name);
 
-  // The <head> shim already resolved + set data-theme; start the map on its basemap.
+  // The <head> shim already set data-theme to match; start the map on the chosen basemap.
   state.map = new maplibregl.Map({
     container: "map",
-    style: basemapFor(currentTheme()),
+    style: basemapUrl(state.basemap),
     center: [active.lon, active.lat],
     zoom: 7,
   });
@@ -295,40 +302,52 @@ async function switchLocation(name) {
 async function init() {
   ensureLocationLayers(); // pins for every configured location, above the radar
   refreshLocationMarkers();
-  updateThemeButton(currentTheme());
+  updateThemeButton(chromeFor(state.basemap));
+  populateBasemapSelect();
   await refreshExtent();
   wireControls();
   await loadDefault(); // recent rolling window (unchanged default UX)
 }
 
-// --- theme (light/dark) -----------------------------------------------------
+// --- basemap + chrome theme -------------------------------------------------
 
-function currentTheme() {
-  return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
-}
-
-function updateThemeButton(theme) {
+function updateThemeButton(chrome) {
   // Show the glyph for the mode you'd switch TO.
-  themeBtn.textContent = theme === "dark" ? "☀" : "☾";
+  themeBtn.textContent = chrome === "dark" ? "☀" : "☾";
 }
 
-// Apply a theme: flip the attribute (CSS chrome reacts), persist it, and swap the
-// keyless basemap. The radar dBZ palette is untouched (it's in the PNGs).
-function applyTheme(theme) {
-  document.documentElement.dataset.theme = theme;
-  try {
-    localStorage.setItem(LS_THEME, theme);
-  } catch (e) {
-    /* private mode / storage disabled — theme still applies for this session */
+function populateBasemapSelect() {
+  basemapSelect.innerHTML = "";
+  for (const [key, s] of Object.entries(STYLES)) {
+    const opt = document.createElement("option");
+    opt.value = key;
+    opt.textContent = s.label;
+    basemapSelect.appendChild(opt);
   }
-  updateThemeButton(theme);
+  basemapSelect.value = state.basemap;
+}
+
+// Switch the keyless basemap and derive the UI chrome (light/dark) from it. The radar
+// dBZ palette is untouched (it's baked into the PNGs).
+function applyBasemap(key) {
+  if (!isValidBasemap(key)) return;
+  state.basemap = key;
+  const chrome = chromeFor(key);
+  document.documentElement.dataset.theme = chrome;
+  try {
+    localStorage.setItem(LS_BASEMAP, key);
+  } catch (e) {
+    /* private mode / storage disabled — applies for this session */
+  }
+  updateThemeButton(chrome);
+  basemapSelect.value = key;
   // setStyle() wipes every custom source/layer, so rebuild ours after the new basemap
   // settles. Re-add on the next `idle` (fires once the style is applied and tile/sprite
   // requests have settled — even if a basemap sprite 404s, unlike isStyleLoaded()).
   state.map.once("idle", reapplyMapLayers);
-  // diff:false forces a clean reload (a liberty↔dark diff can leave our custom layers
-  // in a half-state), so reapplyMapLayers always rebuilds from scratch.
-  state.map.setStyle(basemapFor(theme), { diff: false });
+  // diff:false forces a clean reload (a style diff can leave our custom layers in a
+  // half-state), so reapplyMapLayers always rebuilds from scratch.
+  state.map.setStyle(basemapUrl(key), { diff: false });
 }
 
 function reapplyMapLayers() {
@@ -835,7 +854,10 @@ function wireControls() {
       renderLocList();
     }
   });
-  themeBtn.addEventListener("click", () => applyTheme(nextTheme(currentTheme())));
+  themeBtn.addEventListener("click", () =>
+    applyBasemap(nextChromeToggle(state.basemap)),
+  );
+  basemapSelect.addEventListener("change", () => applyBasemap(basemapSelect.value));
   // Radar opacity: live setPaintProperty + persist.
   opacityInput.value = String(state.opacity);
   opacityInput.addEventListener("input", () => {

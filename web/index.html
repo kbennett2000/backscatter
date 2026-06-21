@@ -9,19 +9,20 @@
       rel="stylesheet"
       href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
     />
-    <!-- Theme logic + no-FOUC guard: set data-theme BEFORE the stylesheet paints, so a
-         dark-mode user never flashes light. Same resolver app.js uses (theme.js). -->
+    <!-- Basemap/theme logic + no-FOUC guard: set data-theme BEFORE the stylesheet paints,
+         so a dark-mode user never flashes light. Same resolver app.js uses (theme.js). -->
     <script src="/static/theme.js"></script>
     <script>
       (function () {
         try {
-          var stored = localStorage.getItem("backscatter.theme");
+          var stored =
+            localStorage.getItem("backscatter.basemap") ||
+            localStorage.getItem("backscatter.theme");
           var prefersDark =
             window.matchMedia &&
             window.matchMedia("(prefers-color-scheme: dark)").matches;
-          document.documentElement.dataset.theme = resolveInitialTheme(
-            stored,
-            prefersDark,
+          document.documentElement.dataset.theme = chromeFor(
+            resolveInitialBasemap(stored, prefersDark),
           );
         } catch (e) {
           document.documentElement.dataset.theme = "light";
@@ -82,6 +83,10 @@
       </form>
       <div id="displaysettings">
         <h3>Display</h3>
+        <label class="setting"
+          ><span>Map style</span>
+          <select id="basemap" aria-label="Map style"></select
+        ></label>
         <label class="setting"
           ><span>Radar opacity</span>
           <input id="opacity" type="range" min="0.1" max="1" step="0.05"
