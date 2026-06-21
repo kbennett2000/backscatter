@@ -79,7 +79,8 @@ body {
   max-width: 60ch;
 }
 
-/* Live "engine is alive" cue, just under the readout. */
+/* Freshness cue, just under the readout. Tappable: jumps to the latest frame (the
+   reachable "go live" control on mobile, where Latest is inside the Window drawer). */
 #status {
   position: absolute;
   z-index: 1;
@@ -91,6 +92,18 @@ body {
   padding: 4px 9px;
   border-radius: 4px;
   font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  user-select: none;
+}
+
+#status:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* When tracking newest, read brighter than the muted stale text. */
+#status.live {
+  color: var(--chrome-text);
 }
 
 #status[hidden] {

@@ -437,6 +437,7 @@ function updateStatus() {
   statusEl.textContent = statusText(state.extent.max, now, live, (iso) =>
     relativeAge(iso, now),
   );
+  statusEl.classList.toggle("live", live); // brighter when tracking newest
   statusEl.hidden = false;
 }
 
@@ -928,6 +929,19 @@ function wireControls() {
       loadWindow(start, end);
     });
   }
+  // Tapping the freshness cue jumps to the latest frame — the reachable "go live"
+  // control on mobile (where the Latest button sits inside the Window drawer).
+  const goLive = () => {
+    pause();
+    loadDefault();
+  };
+  statusEl.addEventListener("click", goLive);
+  statusEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      goLive();
+    }
+  });
   // The wrong-window card's "Jump to latest" snaps back to the live latest view.
   spAction.addEventListener("click", () => {
     pause();
