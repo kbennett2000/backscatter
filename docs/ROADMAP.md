@@ -94,6 +94,21 @@ no API/collector changes).
 - **Done when:** you can switch from Home (KFTG, Elizabeth) to e.g. OKC (KTLX) and the
   map re-centers and shows that radar's frames, correctly georeferenced.
 
+## Slice 10 — Location management (CRUD, persisted, live)
+Turn locations from read-only env config into mutable, persisted state managed from
+the UI (ADR-0008).
+- **Persistence:** locations move to a SQLite `locations` table; env JSON only seeds
+  an empty store, then the DB wins. Site stays derived (re-resolves on edit).
+- **Write API:** `POST/PUT/DELETE /api/locations` with the invariants enforced on
+  every write (≥1, exactly one default, unique names); deleting the last or the
+  default is rejected.
+- **Collector live-reload:** `collect` re-reads the store each cycle — an added
+  location archives next cycle, a deleted one stops, no restart.
+- **UI:** a manage-locations panel (add / edit / delete / set-default, click-map to
+  set coords) that refreshes the Slice-9 switcher; backend validation shown inline.
+- **Done when:** you can add/edit/delete locations in the browser, the running
+  collector picks them up within a cycle, and a restart preserves them.
+
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher
 - MRMS national composite at low zoom (wide-area context — the *right* way to use

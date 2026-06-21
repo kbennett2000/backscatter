@@ -60,7 +60,10 @@ uv run backscatter serve             # serve the map UI at http://<host>:8000
 configured location, with a **timeline scrubber + play/pause** over every frame
 `collect` has accumulated — scrub or loop across the whole archive. With multiple
 configured locations, a **location selector** switches the active one (re-centering
-the map and re-pointing the timeline at that location's radar). Run
+the map and re-pointing the timeline at that location's radar). Locations are
+**managed in the UI** (add / edit / delete / set-default) and persisted in the
+SQLite store; `BACKSCATTER_LOCATIONS` only *seeds* an empty store (see ADR-0008). A
+running `collect` picks up location changes within a cycle — no restart. Run
 `backscatter collect` for a while first to build up frames (one every ~5 min).
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for build status.
 

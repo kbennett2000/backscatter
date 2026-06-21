@@ -86,6 +86,86 @@ body {
   color: #000;
 }
 
+#locpanel {
+  position: absolute;
+  z-index: 3;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, 94vw);
+  background: rgba(0, 0, 0, 0.82);
+  color: #fff;
+  padding: 12px 14px;
+  border-radius: 8px;
+  font: 12px/1.5 system-ui, sans-serif;
+}
+
+#locpanel[hidden] {
+  display: none;
+}
+
+#locpanel h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+#loclist .locrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+#loclist .locrow .grow {
+  flex: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+#locpanel button {
+  font: inherit;
+  cursor: pointer;
+  border: 0;
+  border-radius: 4px;
+  padding: 2px 7px;
+  background: #fff;
+  color: #000;
+}
+
+#locpanel button.ghost {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+#locform {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+#locform #formtitle {
+  flex: 1 0 100%;
+  opacity: 0.7;
+}
+
+#locform input[type="number"] {
+  width: 9ch;
+}
+
+#locform #lf-name {
+  width: 14ch;
+}
+
+#locpanel .err {
+  flex: 1 0 100%;
+  color: #ff9a9a;
+  min-height: 1em;
+}
+
 #timeline {
   position: absolute;
   z-index: 2;

@@ -19,6 +19,7 @@
         <span class="muted">location:</span>
         <select id="location" aria-label="Active location"></select>
       </span>
+      <button id="manage" type="button">⚙ Locations</button>
       <span class="muted">window (UTC):</span>
       <input id="start" type="datetime-local" />
       <span class="muted">→</span>
@@ -28,6 +29,21 @@
       <button class="preset" data-hours="24" type="button">24h</button>
       <button id="latest" type="button">Latest</button>
       <span id="extent" class="muted"></span>
+    </div>
+    <div id="locpanel" hidden>
+      <h3>Locations</h3>
+      <div id="loclist"></div>
+      <form id="locform">
+        <div id="formtitle">Add location</div>
+        <input id="lf-name" placeholder="name" autocomplete="off" />
+        <input id="lf-lat" type="number" step="any" placeholder="lat" />
+        <input id="lf-lon" type="number" step="any" placeholder="lon" />
+        <label><input id="lf-default" type="checkbox" /> default</label>
+        <button id="lf-pick" type="button">📍 pick on map</button>
+        <button id="lf-save" type="submit">Add</button>
+        <button id="lf-reset" type="button">Clear</button>
+        <div id="locerror" class="err"></div>
+      </form>
     </div>
     <div id="timeline" hidden>
       <button id="play" type="button" aria-label="Play/pause">▶</button>

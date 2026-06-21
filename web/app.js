@@ -22,6 +22,17 @@ const endInput = $("end");
 const extentLabel = $("extent");
 const locwrap = $("locwrap");
 const locationSelect = $("location");
+const manageBtn = $("manage");
+const locpanel = $("locpanel");
+const loclist = $("loclist");
+const locform = $("locform");
+const lfName = $("lf-name");
+const lfLat = $("lf-lat");
+const lfLon = $("lf-lon");
+const lfDefault = $("lf-default");
+const lfSave = $("lf-save");
+const formTitle = $("formtitle");
+const locError = $("locerror");
 
 const state = {
   map: null,
@@ -33,6 +44,8 @@ const state = {
   playing: false,
   timer: null,
   preloaded: new Map(),
+  editingId: null, // location id being edited, or null in add mode
+  picking: false, // map-click sets the form's lat/lon
   layerReady: false,
   extent: { min: null, max: null, count: 0 },
   window: null, // {start, end} ISO when an explicit window is loaded; null = recent
@@ -82,6 +95,116 @@ async function fetchFrames({ start, end, cursor, limit }) {
   return fetch(`/api/frames?${p.toString()}`).then((r) => r.json());
 }
 
+// --- location management (CRUD) ---------------------------------------------
+
+async function refreshLocations() {
+  const data = await fetch("/api/locations").then((r) => r.json());
+  state.locations = data.locations || [];
+  // If the active location was removed, fall back to the default.
+  if (!state.locations.some((l) => l.name === state.location)) {
+    const fallback =
+      state.locations.find((l) => l.default) || state.locations[0];
+    if (fallback) await switchLocation(fallback.name);
+  }
+  populateSelector(state.location);
+  renderLocList();
+}
+
+function renderLocList() {
+  loclist.innerHTML = "";
+  for (const loc of state.locations) {
+    const row = document.createElement("div");
+    row.className = "locrow";
+    const label = document.createElement("span");
+    label.className = "grow";
+    label.textContent =
+      `${loc.default ? "★ " : ""}${loc.name} · ${loc.site} · ` +
+      `${loc.lat.toFixed(3)}, ${loc.lon.toFixed(3)}`;
+    row.appendChild(label);
+    if (!loc.default) {
+      row.appendChild(_btn("default", "ghost", () => setDefault(loc.id)));
+    }
+    row.appendChild(_btn("edit", "ghost", () => startEdit(loc)));
+    row.appendChild(_btn("delete", "ghost", () => deleteLocation(loc.id)));
+    loclist.appendChild(row);
+  }
+}
+
+function _btn(text, cls, onClick) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = cls;
+  b.textContent = text;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+function startAdd() {
+  state.editingId = null;
+  formTitle.textContent = "Add location";
+  lfSave.textContent = "Add";
+  lfName.value = "";
+  lfLat.value = "";
+  lfLon.value = "";
+  lfDefault.checked = false;
+  locError.textContent = "";
+}
+
+function startEdit(loc) {
+  state.editingId = loc.id;
+  formTitle.textContent = `Edit ${loc.name}`;
+  lfSave.textContent = "Save";
+  lfName.value = loc.name;
+  lfLat.value = loc.lat;
+  lfLon.value = loc.lon;
+  lfDefault.checked = loc.default;
+  locError.textContent = "";
+}
+
+async function submitForm(ev) {
+  ev.preventDefault();
+  locError.textContent = "";
+  const body = {
+    name: lfName.value.trim(),
+    lat: Number(lfLat.value),
+    lon: Number(lfLon.value),
+    default: lfDefault.checked,
+  };
+  const editing = state.editingId !== null;
+  const url = editing ? `/api/locations/${state.editingId}` : "/api/locations";
+  const resp = await fetch(url, {
+    method: editing ? "PUT" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    locError.textContent = data.detail || `error ${resp.status}`;
+    return;
+  }
+  startAdd();
+  await refreshLocations();
+}
+
+async function deleteLocation(id) {
+  const resp = await fetch(`/api/locations/${id}`, { method: "DELETE" });
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    locError.textContent = data.detail || `error ${resp.status}`;
+    return;
+  }
+  await refreshLocations();
+}
+
+async function setDefault(id) {
+  const resp = await fetch(`/api/locations/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ default: true }),
+  });
+  if (resp.ok) await refreshLocations();
+}
+
 async function main() {
   const [, locData] = await Promise.all([
     fetch("/api/config").then((r) => r.json()),
@@ -101,6 +224,12 @@ async function main() {
   });
   state.map.addControl(new maplibregl.NavigationControl(), "top-right");
   state.map.on("load", init);
+  state.map.on("click", (e) => {
+    if (!state.picking) return;
+    lfLat.value = e.lngLat.lat.toFixed(4);
+    lfLon.value = e.lngLat.lng.toFixed(4);
+    state.picking = false;
+  });
 }
 
 function pickInitialLocation() {
@@ -307,6 +436,19 @@ function wireControls() {
   locationSelect.addEventListener("change", () =>
     switchLocation(locationSelect.value),
   );
+  manageBtn.addEventListener("click", () => {
+    locpanel.hidden = !locpanel.hidden;
+    if (!locpanel.hidden) {
+      startAdd();
+      renderLocList();
+    }
+  });
+  locform.addEventListener("submit", submitForm);
+  $("lf-reset").addEventListener("click", startAdd);
+  $("lf-pick").addEventListener("click", () => {
+    state.picking = true;
+    locError.textContent = "click the map to set lat/lon…";
+  });
   scrubber.addEventListener("input", () => {
     pause();
     goTo(Number(scrubber.value));
