@@ -26,6 +26,7 @@ from backscatter.render.render import RenderResult, render_volume
 from backscatter.sites.select import RankedSite, rank_sites
 from backscatter.sites.table import site_by_icao
 from backscatter.store import db
+from backscatter.store import locations as locations_store
 
 log = logging.getLogger("backscatter.collect")
 
@@ -79,6 +80,7 @@ def _candidate_sites(location: Location) -> list[RankedSite]:
 
 
 def collect_cycle(
+    locations: list[Location],
     config: Config,
     conn: sqlite3.Connection,
     *,
@@ -86,15 +88,16 @@ def collect_cycle(
     client: S3Client,
     render_fn: RenderFn = render_volume,
 ) -> list[CycleResult]:
-    """Run one pull→render→index pass over **every** configured location.
+    """Run one pull→render→index pass over **every** given location.
 
+    ``locations`` is read fresh from the store each cycle (live-reload), not cached.
     Locations are processed sequentially, so two locations sharing a nearest radar
     converge on one frame: the first stores it, the second sees ``ALREADY_HAVE`` —
     no double pull/store/render. One location's unexpected error is caught so the
     others (and the loop) carry on.
     """
     results: list[CycleResult] = []
-    for location in config.locations:
+    for location in locations:
         try:
             results.append(
                 _collect_location(
@@ -200,14 +203,20 @@ def run_collect(
     now_fn = now_fn or (lambda: datetime.now(UTC))
     client = s3.make_client(client)
 
-    conn = db.connect(config.db_path)
+    conn = locations_store.connect_bootstrapped(config)
     try:
-        db.init_db(conn)
         cycles = 0
         while not stop_event.is_set() and (max_cycles is None or cycles < max_cycles):
             try:
+                # Re-read locations each cycle so UI edits take effect without a
+                # restart: a new location starts archiving next cycle, a deleted
+                # one stops.
+                locations = locations_store.current_locations(
+                    conn, config.site_override
+                )
                 collect_cycle(
-                    config, conn, now=now_fn(), client=client, render_fn=render_fn
+                    locations, config, conn,
+                    now=now_fn(), client=client, render_fn=render_fn,
                 )
             except Exception:
                 # One bad cycle (network/S3/decode) must not end collection.

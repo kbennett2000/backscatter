@@ -18,6 +18,7 @@ from backscatter.config import Config
 from backscatter.ingest import naming, s3
 from backscatter.ingest.s3 import S3Client
 from backscatter.store import db
+from backscatter.store import locations as locations_store
 
 
 class PullStatus(StrEnum):
@@ -118,13 +119,13 @@ def pull_latest(
     now: datetime | None = None,
     client: S3Client | None = None,
 ) -> PullResult:
-    """Fetch + index the latest volume for ``config.site``. Idempotent per scan."""
+    """Fetch + index the latest volume for the default location. Idempotent."""
     now = now or datetime.now(UTC)
     client = s3.make_client(client)
 
-    conn = db.connect(config.db_path)
+    conn = locations_store.connect_bootstrapped(config)
     try:
-        db.init_db(conn)
-        return fetch_volume(config, config.site, conn, now=now, client=client)
+        site = locations_store.default_location(conn, config.site_override).site
+        return fetch_volume(config, site, conn, now=now, client=client)
     finally:
         conn.close()

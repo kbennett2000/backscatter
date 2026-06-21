@@ -10,7 +10,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from backscatter.config import Config, Location
+from backscatter.config import Config, SeedLocation
 from backscatter.ingest import s3
 from backscatter.ingest.pull import PullStatus, find_latest, pull_latest
 from backscatter.store import db
@@ -38,13 +38,14 @@ def _put_raw(client: object, key: str) -> None:
     client.put_object(Bucket=s3.BUCKET, Key=key, Body=b"x")  # type: ignore[attr-defined]
 
 
-def _config(tmp_path: Path, site: str = "KFTG") -> Config:
-    home = Location("Home", 39.3603, -104.5969, site, True, False)
+def _config(tmp_path: Path) -> Config:
+    # Single Home at Elizabeth, CO -> resolves to KFTG; pull reads it from the store.
     return Config(
-        locations=(home,),
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "backscatter.db",
         poll_interval_s=60.0,
+        site_override=None,
+        seed_locations=(SeedLocation("Home", 39.3603, -104.5969, True),),
     )
 
 

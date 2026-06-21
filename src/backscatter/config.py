@@ -1,15 +1,14 @@
-"""Runtime configuration — the single source of truth for locations, paths, cadence.
+"""Runtime configuration — infra settings + the seed for the location store.
 
-Configuration is a **list of named locations**, exactly one flagged the default
-("Home"). The active radar ``site`` for each location is resolved from its lat/lon
-against the bundled NEXRAD table (ADR-0005), unless an explicit site override is
-given — which applies to the **default** location only. `collect` archives every
-location; the API resolves a location to its site (frames are per-radar, ADR-0006).
+Infra config (data dir, DB path, poll interval, the global ``SITE`` override) is
+env-sourced and immutable. The **location list** is mutable, user-managed runtime
+data persisted in the SQLite store (`store/locations.py`, ADR-0008) — not here. This
+module owns the env *seed* for an empty store and the reusable location logic
+(`Location`, `resolve_location`, `validate_locations`) that the store imports.
 
-Locations come from ``BACKSCATTER_LOCATIONS`` (a JSON list); absent that, the single
-``BACKSCATTER_LAT``/``BACKSCATTER_LON`` form is treated as a one-entry "Home" list
-(back-compat). No module reads the environment directly; this loader is the only
-place, so a file-based loader (e.g. TOML) can drop in later (see ADR-0006).
+No module reads the environment directly; this loader is the only place. A
+``BACKSCATTER_LOCATIONS`` JSON list seeds the store; absent it, the single
+``BACKSCATTER_LAT``/``BACKSCATTER_LON`` form seeds a one-entry "Home" (back-compat).
 """
 
 from __future__ import annotations
@@ -34,6 +33,16 @@ DEFAULT_POLL_INTERVAL_S = 60.0
 
 
 @dataclass(frozen=True)
+class SeedLocation:
+    """A raw location used only to seed an empty store (site not yet resolved)."""
+
+    name: str
+    lat: float
+    lon: float
+    is_default: bool
+
+
+@dataclass(frozen=True)
 class Location:
     """A named place + its resolved active radar."""
 
@@ -43,47 +52,45 @@ class Location:
     site: str  # resolved nearest radar, or the override (default location only)
     is_default: bool
     site_override: bool  # whether `site` was pinned explicitly (default loc only)
+    id: int | None = None  # store row id (None for unsaved/seed-derived)
 
 
 @dataclass(frozen=True)
 class Config:
-    """Resolved runtime configuration."""
+    """Resolved runtime infra configuration (locations live in the store)."""
 
-    locations: tuple[Location, ...]
     data_dir: Path
     db_path: Path
     poll_interval_s: float
+    site_override: str | None  # global SITE pin (applies to the default location)
+    seed_locations: tuple[SeedLocation, ...]  # used only to bootstrap an empty store
 
-    @property
-    def default_location(self) -> Location:
-        """The Home location (validated to exist exactly once at load)."""
-        return next(loc for loc in self.locations if loc.is_default)
 
-    def location_by_name(self, name: str) -> Location | None:
-        """Look up a configured location by name (case-insensitive)."""
-        target = name.strip().lower()
-        for loc in self.locations:
-            if loc.name.lower() == target:
-                return loc
-        return None
+def resolve_location(
+    name: str,
+    lat: float,
+    lon: float,
+    *,
+    is_default: bool,
+    override: str | None,
+) -> Location:
+    """Resolve a location's active radar (override pins the default only)."""
+    if is_default and override:
+        return Location(name, lat, lon, override.upper(), True, True)
+    return Location(name, lat, lon, nearest_site(lat, lon).icao, is_default, False)
 
-    # Home-facade: existing single-location consumers (pull, /api/config, cli) read
-    # these and transparently operate on the default location.
-    @property
-    def lat(self) -> float:
-        return self.default_location.lat
 
-    @property
-    def lon(self) -> float:
-        return self.default_location.lon
-
-    @property
-    def site(self) -> str:
-        return self.default_location.site
-
-    @property
-    def site_override(self) -> bool:
-        return self.default_location.site_override
+def validate_locations(names: list[str], default_count: int) -> None:
+    """Enforce the location invariants; raise ValueError on violation."""
+    if not names:
+        raise ValueError("at least one location is required")
+    if default_count != 1:
+        raise ValueError(
+            f"exactly one location must be the default, found {default_count}"
+        )
+    lowered = [n.lower() for n in names]
+    if len(lowered) != len(set(lowered)):
+        raise ValueError("location names must be unique (case-insensitive)")
 
 
 def load_config(
@@ -92,21 +99,14 @@ def load_config(
     lat: float | None = None,
     lon: float | None = None,
 ) -> Config:
-    """Resolve configuration with precedence CLI arg > env > default.
-
-    Args:
-        site: Explicit site override; applies to the default location only.
-        lat: Latitude override for the (single-location) Home form.
-        lon: Longitude override for the (single-location) Home form.
+    """Resolve infra config + the location seed. Precedence CLI arg > env > default.
 
     Raises:
-        ValueError: on invalid configuration (no locations, not exactly one default,
-            duplicate names, or malformed ``BACKSCATTER_LOCATIONS`` JSON).
+        ValueError: on malformed ``BACKSCATTER_LOCATIONS`` JSON or an invalid seed
+            (no locations, not exactly one default, duplicate names).
     """
-    raw = _raw_locations(lat=lat, lon=lon)
-    override = site or os.environ.get("BACKSCATTER_SITE")
-    locations = tuple(_resolve_location(r, override) for r in raw)
-    _validate_locations(locations)
+    seed = _seed_locations(lat=lat, lon=lon)
+    _validate_seed(seed)
 
     data_dir_env = os.environ.get("BACKSCATTER_DATA_DIR")
     data_dir = Path(data_dir_env) if data_dir_env else DEFAULT_DATA_DIR
@@ -117,15 +117,18 @@ def load_config(
     )
 
     return Config(
-        locations=locations,
         data_dir=data_dir,
         db_path=db_path,
         poll_interval_s=poll_interval_s,
+        site_override=site or os.environ.get("BACKSCATTER_SITE"),
+        seed_locations=seed,
     )
 
 
-def _raw_locations(*, lat: float | None, lon: float | None) -> list[dict[str, object]]:
-    """Raw location dicts from BACKSCATTER_LOCATIONS, or the single Home fallback."""
+def _seed_locations(
+    *, lat: float | None, lon: float | None
+) -> tuple[SeedLocation, ...]:
+    """Seed locations from BACKSCATTER_LOCATIONS, or the single Home fallback."""
     blob = os.environ.get("BACKSCATTER_LOCATIONS")
     if blob:
         try:
@@ -134,49 +137,36 @@ def _raw_locations(*, lat: float | None, lon: float | None) -> list[dict[str, ob
             raise ValueError(f"BACKSCATTER_LOCATIONS is not valid JSON: {exc}") from exc
         if not isinstance(parsed, list):
             raise ValueError("BACKSCATTER_LOCATIONS must be a JSON list of locations")
-        return parsed
+        return tuple(_seed_from_dict(raw) for raw in parsed)
     # Back-compat: the single lat/lon form is one location named "Home".
-    return [
-        {
-            "name": DEFAULT_HOME_NAME,
-            "lat": _first_float(lat, os.environ.get("BACKSCATTER_LAT"), DEFAULT_LAT),
-            "lon": _first_float(lon, os.environ.get("BACKSCATTER_LON"), DEFAULT_LON),
-            "default": True,
-        }
-    ]
+    return (
+        SeedLocation(
+            name=DEFAULT_HOME_NAME,
+            lat=_first_float(lat, os.environ.get("BACKSCATTER_LAT"), DEFAULT_LAT),
+            lon=_first_float(lon, os.environ.get("BACKSCATTER_LON"), DEFAULT_LON),
+            is_default=True,
+        ),
+    )
 
 
-def _resolve_location(raw: dict[str, object], override: str | None) -> Location:
-    """Turn a raw location dict into a resolved :class:`Location`."""
+def _seed_from_dict(raw: object) -> SeedLocation:
     if not isinstance(raw, dict):
         raise ValueError(f"each location must be a JSON object, got {raw!r}")
     try:
         name = str(raw["name"]).strip()
-        lat = float(raw["lat"])  # type: ignore[arg-type]
-        lon = float(raw["lon"])  # type: ignore[arg-type]
+        lat = float(raw["lat"])
+        lon = float(raw["lon"])
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"location missing/invalid name/lat/lon: {raw!r}") from exc
     if not name:
         raise ValueError(f"location name must be non-empty: {raw!r}")
-    is_default = bool(raw.get("default", False))
-
-    # The site override pins the default location only; others resolve their nearest.
-    if is_default and override:
-        return Location(name, lat, lon, override.upper(), True, True)
-    return Location(name, lat, lon, nearest_site(lat, lon).icao, is_default, False)
+    return SeedLocation(name, lat, lon, bool(raw.get("default", False)))
 
 
-def _validate_locations(locations: tuple[Location, ...]) -> None:
-    if not locations:
-        raise ValueError("at least one location is required")
-    defaults = [loc for loc in locations if loc.is_default]
-    if len(defaults) != 1:
-        raise ValueError(
-            f"exactly one location must be the default, found {len(defaults)}"
-        )
-    names = [loc.name.lower() for loc in locations]
-    if len(names) != len(set(names)):
-        raise ValueError("location names must be unique (case-insensitive)")
+def _validate_seed(seed: tuple[SeedLocation, ...]) -> None:
+    validate_locations(
+        [s.name for s in seed], sum(1 for s in seed if s.is_default)
+    )
 
 
 def _first_float(arg: float | None, env: str | None, default: float) -> float:

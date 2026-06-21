@@ -56,8 +56,11 @@ def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    # WAL lets the serve process read while the collect process writes.
+    # WAL lets the serve process read while the collect process writes; the busy
+    # timeout lets a writer wait out another writer (API edits vs collector) instead
+    # of failing immediately with "database is locked".
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     return conn
 
 

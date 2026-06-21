@@ -16,6 +16,7 @@ from backscatter.config import load_config
 from backscatter.ingest.pull import PullStatus, pull_latest
 from backscatter.render.render import render_volume
 from backscatter.sites.select import rank_sites
+from backscatter.store import locations as locations_store
 
 # How many ranked sites the `site` command prints.
 _SITE_LIST_LEN = 5
@@ -130,12 +131,17 @@ def _cmd_site(args: argparse.Namespace) -> int:
             return 2
     else:
         config = load_config()
-        lat, lon = config.lat, config.lon
+        conn = locations_store.connect_bootstrapped(config)
+        try:
+            default = locations_store.default_location(conn, config.site_override)
+        finally:
+            conn.close()
+        lat, lon = default.lat, default.lon
         # If a site override is configured, it — not the nearest — is what `pull`
         # will use. Surface that so the output isn't misleading.
         nearest = rank_sites(lat, lon)[0].site.icao
-        if config.site != nearest:
-            override_site = config.site
+        if default.site != nearest:
+            override_site = default.site
 
     ranked = rank_sites(lat, lon)
     active = override_site or ranked[0].site.icao
@@ -178,9 +184,14 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     from backscatter.api.app import create_app
 
     config = load_config()
+    conn = locations_store.connect_bootstrapped(config)
+    try:
+        d = locations_store.default_location(conn, config.site_override)
+    finally:
+        conn.close()
     print(
         f"Serving backscatter on http://{args.host}:{args.port} "
-        f"(center {config.lat:.4f},{config.lon:.4f}, site {config.site})"
+        f"(default {d.name} {d.lat:.4f},{d.lon:.4f} → {d.site})"
     )
     uvicorn.run(create_app(config), host=args.host, port=args.port)
     return 0
@@ -207,12 +218,16 @@ def _cmd_collect(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGINT, _handle)
     signal.signal(signal.SIGTERM, _handle)
 
+    conn = locations_store.connect_bootstrapped(config)
+    try:
+        loc_list = locations_store.current_locations(conn, config.site_override)
+    finally:
+        conn.close()
     locs = ", ".join(
-        f"{loc.name}→{loc.site}{'*' if loc.is_default else ''}"
-        for loc in config.locations
+        f"{loc.name}→{loc.site}{'*' if loc.is_default else ''}" for loc in loc_list
     )
     print(
-        f"Collecting {len(config.locations)} location(s) [{locs}] "
+        f"Collecting {len(loc_list)} location(s) [{locs}] "
         f"every {config.poll_interval_s:.0f}s — Ctrl-C to stop. (*=default)"
     )
     run_collect(config, stop_event=stop, max_cycles=args.max_cycles)
