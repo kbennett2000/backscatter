@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -13,6 +13,7 @@ from PIL import Image
 from backscatter.api.app import create_app
 from backscatter.api.frames import latest_frame
 from backscatter.config import Config, SeedLocation
+from backscatter.prune.prune import run_prune
 from backscatter.store import db
 
 BOUNDS = (-107.23, 37.71, -101.86, 41.86)  # west, south, east, north
@@ -188,6 +189,33 @@ def test_frames_empty_range_is_ok(tmp_path: Path) -> None:
     )
     assert resp.status_code == 200
     assert resp.json()["frames"] == []
+
+
+def test_pruned_frame_leaves_timeline_cleanly(tmp_path: Path) -> None:
+    # A pruned frame must vanish from /api/frames AND its PNG must be gone — no
+    # dangling row pointing at a deleted file (which would 404 the scrubber).
+    config = _config(tmp_path)  # age limit 30 days (default ON)
+    old_vol = "KFTG20260101_000000_V06"
+    new_vol = "KFTG20260620_215107_V06"
+    _seed_frame(
+        config, volume=old_vol, scan_time="2026-01-01T00:00:00+00:00", write_png=True
+    )
+    _seed_frame(
+        config, volume=new_vol, scan_time="2026-06-20T21:51:07+00:00", write_png=True
+    )
+
+    conn = db.connect(config.db_path)
+    db.init_db(conn)
+    run_prune(conn, config, now=datetime(2026, 6, 20, 22, 0, tzinfo=UTC), dry_run=False)
+    conn.close()
+
+    client = TestClient(create_app(config))
+    scans = [f["scan_time"] for f in client.get("/api/frames").json()["frames"]]
+    assert scans == ["2026-06-20T21:51:07+00:00"]  # only the new frame remains
+    # The kept frame's PNG still serves; the pruned one's file is gone (no 404 row).
+    assert client.get(f"/renders/KFTG/{new_vol}.png").status_code == 200
+    assert client.get(f"/renders/KFTG/{old_vol}.png").status_code == 404
+    assert not (config.data_dir / "renders" / "KFTG" / f"{old_vol}.png").exists()
 
 
 def test_frames_limit_keeps_most_recent(tmp_path: Path) -> None:

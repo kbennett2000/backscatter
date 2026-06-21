@@ -54,6 +54,7 @@ Early build — a few commands work end to end:
 uv run backscatter pull              # fetch the latest volume for the configured site
 uv run backscatter render <volume>   # render one georeferenced frame (PNG + bounds)
 uv run backscatter serve             # serve the map UI at http://<host>:8000
+uv run backscatter prune --dry-run   # preview what retention would delete (no deletes)
 ```
 
 `serve` opens a MapLibre map (keyless OpenFreeMap basemap) centered on your
@@ -66,6 +67,22 @@ SQLite store; `BACKSCATTER_LOCATIONS` only *seeds* an empty store (see ADR-0008)
 running `collect` picks up location changes within a cycle — no restart. Run
 `backscatter collect` for a while first to build up frames (one every ~5 min).
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for build status.
+
+### Retention
+The archive is bounded by a configurable retention policy (see ADR-0009) so it
+doesn't grow without limit. Two independent limits, both managed via env:
+- **Age limit** — delete frames older than N days. **Default 30 days, ON.** Set
+  `BACKSCATTER_RETENTION_DAYS=0` to disable.
+- **Size cap** — delete oldest-first once the archive exceeds N GB. **Default
+  off/unlimited** (opt-in, no surprise deletion); set `BACKSCATTER_RETENTION_MAX_GB`.
+
+Both can be active at once — a frame is pruned if it violates *either*. A running
+`backscatter collect` prunes automatically (throttled to once per
+`BACKSCATTER_PRUNE_INTERVAL`, default 1h). `backscatter prune` runs it on demand;
+**`backscatter prune --dry-run` previews exactly what would be deleted without
+touching anything** — run that first. The live command prompts for confirmation
+unless you pass `--yes`. Pruning removes the raw volume, its rendered frame, and the
+index row together, so a pruned frame leaves the timeline cleanly.
 
 The timeline is driven by `GET /api/frames?site=&start=&end=&cursor=&limit=` —
 rendered frames from the index, oldest-first, capped per request (default 500, max

@@ -10,9 +10,13 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from backscatter import __version__
-from backscatter.config import load_config
+from backscatter.config import Config, load_config
+
+if TYPE_CHECKING:
+    from backscatter.prune.prune import PruneReport
 from backscatter.ingest.pull import PullStatus, pull_latest
 from backscatter.render.render import render_volume
 from backscatter.sites.select import rank_sites
@@ -87,6 +91,23 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Stop after N cycles (default: run until interrupted).",
+    )
+
+    prune_help = "Delete archived frames that fall outside the retention policy."
+    prune_parser = subparsers.add_parser(
+        "prune", help=prune_help, description=prune_help
+    )
+    prune_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Show what would be deleted without deleting anything.",
+    )
+    prune_parser.add_argument(
+        "--yes",
+        action="store_true",
+        default=False,
+        help="Skip the confirmation prompt (for scripts).",
     )
 
     for name, help_text in _STUB_SUBCOMMANDS:
@@ -234,6 +255,73 @@ def _cmd_collect(args: argparse.Namespace) -> int:
     return 0
 
 
+def _policy_line(config: Config) -> str:
+    """One-line summary of the active retention policy."""
+    from backscatter.prune.prune import human_bytes
+
+    days = config.retention_max_age_days
+    size = config.retention_max_size_bytes
+    age = f"{days:g} days" if days is not None else "off"
+    cap = human_bytes(size) if size is not None else "unlimited"
+    return f"Retention policy: age limit {age}, size cap {cap}"
+
+
+def _print_prune_report(report: PruneReport, *, planned: bool) -> None:
+    from backscatter.prune.prune import human_bytes
+
+    verb = "Would prune" if planned else "Pruned"
+    if report.deleted == 0:
+        print(f"{verb} nothing — the archive is within policy.")
+        return
+    print(f"{verb} {report.deleted} frame(s), {human_bytes(report.bytes_reclaimed)}.")
+    print(f"  oldest affected: {report.oldest}")
+    print(f"  newest affected: {report.newest}")
+    reasons = ", ".join(f"{k}={v}" for k, v in sorted(report.by_reason.items()))
+    if reasons:
+        print(f"  by reason: {reasons}")
+
+
+def _cmd_prune(args: argparse.Namespace) -> int:
+    import sys
+    from datetime import UTC, datetime
+
+    from backscatter.prune.prune import human_bytes, run_prune
+
+    config = load_config()
+    print(_policy_line(config))
+    if not config.retention_active:
+        print("No retention limits configured — nothing to prune.")
+        return 0
+
+    conn = locations_store.connect_bootstrapped(config)
+    try:
+        now = datetime.now(UTC)
+        # Preview first — the same selection a live prune would make.
+        preview = run_prune(conn, config, now=now, dry_run=True)
+        _print_prune_report(preview, planned=True)
+        if args.dry_run or preview.deleted == 0:
+            return 0
+
+        if not args.yes and sys.stdin.isatty():
+            prompt = (
+                f"Delete {preview.deleted} frame(s) / "
+                f"{human_bytes(preview.bytes_reclaimed)}? [y/N] "
+            )
+            if input(prompt).strip().lower() not in ("y", "yes"):
+                print("Aborted — nothing deleted.")
+                return 0
+
+        result = run_prune(conn, config, now=now, dry_run=False)
+        _print_prune_report(result, planned=False)
+        if result.skipped:
+            print(
+                f"  skipped {result.skipped} frame(s) on a file error (left intact)."
+            )
+        return 0
+    finally:
+        conn.close()
+
+
 def _dispatch(args: argparse.Namespace) -> int:
     if args.command == "pull":
         return _cmd_pull(args)
@@ -245,6 +333,8 @@ def _dispatch(args: argparse.Namespace) -> int:
         return _cmd_serve(args)
     if args.command == "collect":
         return _cmd_collect(args)
+    if args.command == "prune":
+        return _cmd_prune(args)
     print(f"backscatter {args.command}: not implemented yet")
     return 1
 

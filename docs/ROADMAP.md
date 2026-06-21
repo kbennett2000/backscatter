@@ -109,6 +109,28 @@ the UI (ADR-0008).
 - **Done when:** you can add/edit/delete locations in the browser, the running
   collector picks them up within a cycle, and a restart preserves them.
 
+## Slice 11 — Retention / pruning
+There is no retention: `collect` keeps every volume + frame forever and collect-all
+makes the archive grow unbounded. Bound it with configurable retention (ADR-0009).
+- **Policy:** an **age limit** (default 30 days, ON) and a **size cap** (default
+  OFF/unlimited — opt-in; no surprise GB default). Both can be active; a frame is
+  pruned if it violates **either** (older than the age limit, or in the oldest-first
+  overflow above the size cap). Global across the whole archive; size accounting is
+  real on-disk bytes.
+- **Prune:** removes the raw volume, its rendered PNG + sidecar, and the index row
+  **together** (files-first, then row; idempotent on missing files; a file error skips
+  that frame, never orphaning the index). A pruned frame disappears from the timeline
+  cleanly — no dangling row, no 404.
+- **Where:** a throttled pass in the collect loop (first cycle, then ≤ once per
+  `BACKSCATTER_PRUNE_INTERVAL`, default 1h) — self-bounds with no cron — plus a manual
+  `backscatter prune`. `--dry-run` previews (count / oldest-newest / bytes / by-reason)
+  and deletes nothing; the live command prompts `[y/N]` unless `--yes`.
+- **Config-driven, no UI this slice.** New env: `BACKSCATTER_RETENTION_DAYS` (0 = off),
+  `BACKSCATTER_RETENTION_MAX_GB`, `BACKSCATTER_PRUNE_INTERVAL`.
+- **Done when:** an over-age / over-cap archive prunes to within policy (oldest-first,
+  exact bytes), a pruned frame is gone from `/api/frames` with its files removed, and
+  `--dry-run` reports the same set without deleting anything.
+
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher
 - MRMS national composite at low zoom (wide-area context — the *right* way to use
