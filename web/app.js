@@ -596,7 +596,7 @@ function failBackfill(message) {
 
 // --- auto-update poll (surface newly-landed frames without a reload) ---------
 
-const POLL_MS = 30000;
+const POLL_MS = 10000; // 10s; pairs with the 30s collect interval to cut felt lag
 
 function maybePoll() {
   // While a backfill is in flight it drives its own refresh, so suppress the

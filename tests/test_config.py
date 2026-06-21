@@ -57,8 +57,9 @@ def test_default_seed_is_home_elizabeth() -> None:
 
 
 def test_poll_interval_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("BACKSCATTER_POLL_INTERVAL", "30")
-    assert load_config().poll_interval_s == 30.0
+    # Use a non-default value so this proves the override (not just the default).
+    monkeypatch.setenv("BACKSCATTER_POLL_INTERVAL", "45")
+    assert load_config().poll_interval_s == 45.0
 
 
 # --- retention policy --------------------------------------------------------

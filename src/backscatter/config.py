@@ -28,8 +28,9 @@ DEFAULT_DATA_DIR = Path("data")
 # Default DB filename, placed inside the resolved data dir unless overridden.
 DEFAULT_DB_NAME = "backscatter.db"
 # How often the collect loop polls S3. The radar cadence (4–10 min) is the real
-# ceiling; ~60s with timestamp dedupe captures every volume without hammering S3.
-DEFAULT_POLL_INTERVAL_S = 60.0
+# ceiling; 30s with timestamp dedupe grabs a just-landed assembled volume sooner
+# (cutting felt lag) without hammering S3 (one anonymous LIST per location per cycle).
+DEFAULT_POLL_INTERVAL_S = 30.0
 # Retention (ADR-0009). Age limit defaults ON at 30 days; the size cap defaults
 # OFF (unlimited) — we never ship an arbitrary GB default that could surprise-delete
 # a user's archive. The collect loop runs a throttled prune at most this often.
