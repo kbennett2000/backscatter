@@ -2,18 +2,25 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
 
+import boto3
 import numpy as np
+import pytest
 from fastapi.testclient import TestClient
+from moto import mock_aws
 from PIL import Image
 
 from backscatter.api.app import create_app
 from backscatter.api.frames import latest_frame
 from backscatter.config import Config, SeedLocation
+from backscatter.ingest import naming, s3
+from backscatter.jobs.manager import BackfillJob, JobConflict, JobManager, JobState
 from backscatter.prune.prune import run_prune
+from backscatter.render.render import RenderResult
 from backscatter.store import db
 
 BOUNDS = (-107.23, 37.71, -101.86, 41.86)  # west, south, east, north
@@ -459,3 +466,94 @@ def test_store_wins_over_env_on_restart(tmp_path: Path) -> None:
     )
     client2 = TestClient(create_app(config2))
     assert _names(client2) == ["Home", "OKC"]  # DB wins; the new seed is ignored
+
+
+# --- backfill endpoints (Slice 19) -------------------------------------------
+
+
+@pytest.fixture
+def s3_client() -> Iterator[object]:
+    with mock_aws():
+        client = boto3.client("s3", region_name=s3.REGION)
+        client.create_bucket(Bucket=s3.BUCKET)
+        yield client
+
+
+def _stub_render() -> Callable[..., RenderResult]:
+    def render(volume_path: Path, config: Config) -> RenderResult:
+        name = Path(volume_path).name
+        png = config.data_dir / "renders" / naming.parse_site(name) / f"{name}.png"
+        return RenderResult(
+            png_path=png, sidecar_path=png.with_suffix(".json"),
+            site=naming.parse_site(name), scan_time=naming.parse_scan_time(name),
+            elevation_deg=0.5, width=10, height=20,
+            bounds_wgs84=(-107.0, 37.0, -101.0, 42.0), bounds_3857=(0.0, 0.0, 1.0, 1.0),
+        )
+
+    return render
+
+
+def test_backfill_start_returns_202_and_completes(
+    tmp_path: Path, s3_client: object
+) -> None:
+    config = _config(tmp_path)
+    manager = JobManager(
+        config, client_factory=lambda: s3_client, render_fn=_stub_render(),
+    )
+    client = TestClient(create_app(config, job_manager=manager))
+
+    resp = client.post("/api/backfill", json={"hours": 6})
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["site"] == "KFTG"  # Home → KFTG
+    assert body["state"] in (JobState.QUEUED.value, JobState.RUNNING.value)
+
+    manager.wait(timeout=10)  # let the (empty-range) job finish
+    got = client.get(f"/api/backfill/{body['id']}")
+    assert got.status_code == 200
+    assert got.json()["state"] == JobState.DONE.value
+
+
+def test_backfill_over_cap_400(tmp_path: Path) -> None:
+    client = TestClient(create_app(_config(tmp_path)))
+    resp = client.post("/api/backfill", json={"hours": 25})
+    assert resp.status_code == 400
+    assert "24" in resp.json()["detail"]
+
+
+def test_backfill_unknown_location_400(tmp_path: Path) -> None:
+    client = TestClient(create_app(_config(tmp_path)))
+    resp = client.post("/api/backfill", json={"location": "Nowhere"})
+    assert resp.status_code == 400
+
+
+def test_backfill_conflict_409(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    running = BackfillJob(
+        id="abc123", site="KFTG",
+        start=datetime(2026, 6, 20, tzinfo=UTC),
+        end=datetime(2026, 6, 20, 6, tzinfo=UTC),
+        state=JobState.RUNNING,
+    )
+
+    class _Busy(JobManager):
+        def start(self, **kw: object) -> dict[str, object]:
+            raise JobConflict(running)
+
+    client = TestClient(create_app(config, job_manager=_Busy(config)))
+    resp = client.post("/api/backfill", json={"hours": 6})
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail["job"]["id"] == "abc123"
+    assert "already running" in detail["message"]
+
+
+def test_backfill_status_unknown_404(tmp_path: Path) -> None:
+    client = TestClient(create_app(_config(tmp_path)))
+    assert client.get("/api/backfill/missing").status_code == 404
+
+
+def test_backfill_current_empty_when_none(tmp_path: Path) -> None:
+    client = TestClient(create_app(_config(tmp_path)))
+    resp = client.get("/api/backfill")
+    assert resp.status_code == 200 and resp.json() == {}

@@ -15,6 +15,7 @@ alternatives that were weighed — so the "why" isn't lost.
 | 0007 | [Rendering geometry](../decisions/0007-rendering-geometry.md) — gate placement, projection, the dBZ palette |
 | 0008 | [Mutable locations in SQLite](../decisions/0008-mutable-locations-sqlite.md) — locations become persisted state, env seeds only |
 | 0009 | [Retention & pruning](../decisions/0009-retention-pruning.md) — bound the archive by age and/or size |
+| 0010 | [Web-triggered backfill](../decisions/0010-web-triggered-backfill-job.md) — one-click backfill as an in-process async job; two-writer safety via WAL |
 
 New architectural decisions should be added here as the next numbered file — see
 [Contributing](contributing.md).

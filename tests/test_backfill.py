@@ -144,6 +144,29 @@ def test_full_run_indexes_and_renders_each(tmp_path: Path, s3_client: object) ->
     assert len(frames) == 3
 
 
+def test_progress_cb_invoked_with_live_counts(
+    tmp_path: Path, s3_client: object
+) -> None:
+    config = _config(tmp_path)
+    _seed_three(s3_client)
+    conn = _conn(config)
+    calls: list[tuple[int, int, int]] = []
+
+    def progress(processed: int, total: int, report: object) -> None:
+        calls.append((processed, total, report.fetched))  # type: ignore[attr-defined]
+
+    report = run_backfill(
+        config, conn, "KFTG",
+        datetime(2026, 6, 18, tzinfo=UTC), datetime(2026, 6, 19, tzinfo=UTC),
+        now=_NOW, client=s3_client, render_fn=_stub_render(), progress_cb=progress,
+    )
+    conn.close()
+
+    # Fires once per volume; the last tick reports the full count.
+    assert calls == [(1, 3, 1), (2, 3, 2), (3, 3, 3)]
+    assert report.fetched == 3
+
+
 # --- dedupe / idempotent -----------------------------------------------------
 
 

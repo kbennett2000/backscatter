@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -56,6 +57,12 @@ class BackfillReport:
     already_have: int  # pre-existing, skipped without fetching
     oldest: datetime | None  # span actually fetched
     newest: datetime | None
+
+
+# Called per progress tick with (processed_so_far, to_fetch_total, live_report).
+# Lets a long-running caller (the web backfill job, Slice 19) surface live progress
+# without reimplementing the loop; the report is a snapshot of the counts so far.
+ProgressCb = Callable[[int, int, "BackfillReport"], None]
 
 
 def list_range(
@@ -138,12 +145,26 @@ def run_backfill(
     client: S3Client,
     render_fn: RenderFn = render_volume,
     progress_every: int = 25,
+    progress_cb: ProgressCb | None = None,
 ) -> BackfillReport:
-    """Fetch + render + index every not-yet-indexed volume in the range."""
+    """Fetch + render + index every not-yet-indexed volume in the range.
+
+    ``progress_cb`` (optional) is invoked after *every* volume with
+    ``(processed, to_fetch, report_snapshot)`` — the web job uses it for a smooth
+    live progress bar (it's cheap, just a status update). ``progress_every`` only
+    throttles the log line. Neither affects what gets fetched.
+    """
     plan = plan_backfill(config, conn, site, start, end, now=now, client=client)
     fetched = rendered = render_failed = skipped = 0
     oldest: datetime | None = None
     newest: datetime | None = None
+
+    def _snapshot() -> BackfillReport:
+        return BackfillReport(
+            site=site, fetched=fetched, rendered=rendered,
+            render_failed=render_failed, skipped=skipped,
+            already_have=plan.already_have, oldest=oldest, newest=newest,
+        )
 
     for i, key in enumerate(plan.fetch_keys, start=1):
         try:
@@ -152,35 +173,26 @@ def run_backfill(
             # Transient fetch/network error on one volume — skip, keep going.
             log.exception("backfill: fetch failed for %s; skipping", key)
             skipped += 1
-            continue
-        if result.status is not PullStatus.STORED:
-            # Raced with another writer (ALREADY_HAVE) — not counted as a fetch.
-            continue
+            result = None
 
-        assert result.path is not None and result.scan_time is not None
-        fetched += 1
-        scan = result.scan_time
-        oldest = scan if oldest is None or scan < oldest else oldest
-        newest = scan if newest is None or scan > newest else newest
+        if result is not None and result.status is PullStatus.STORED:
+            assert result.path is not None and result.scan_time is not None
+            fetched += 1
+            scan = result.scan_time
+            oldest = scan if oldest is None or scan < oldest else oldest
+            newest = scan if newest is None or scan > newest else newest
+            if render_and_index(
+                config, conn, volume_path=result.path, site=site,
+                scan_time=scan, now=now, render_fn=render_fn, label="backfill",
+            ):
+                rendered += 1
+            else:
+                render_failed += 1
+        # else: ALREADY_HAVE race (not STORED) or a skipped fetch — counted above.
 
-        if render_and_index(
-            config, conn, volume_path=result.path, site=site,
-            scan_time=scan, now=now, render_fn=render_fn, label="backfill",
-        ):
-            rendered += 1
-        else:
-            render_failed += 1
-
+        if progress_cb is not None:
+            progress_cb(i, plan.to_fetch, _snapshot())
         if progress_every and i % progress_every == 0:
             log.info("backfill %s: %d/%d processed", site, i, plan.to_fetch)
 
-    return BackfillReport(
-        site=site,
-        fetched=fetched,
-        rendered=rendered,
-        render_failed=render_failed,
-        skipped=skipped,
-        already_have=plan.already_have,
-        oldest=oldest,
-        newest=newest,
-    )
+    return _snapshot()

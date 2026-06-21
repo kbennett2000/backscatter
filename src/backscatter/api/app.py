@@ -9,7 +9,7 @@ DB (schema + seeded location store). Locations are mutable, DB-backed state (ADR
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -27,8 +27,18 @@ from backscatter.api.frames import (
     renders_dir,
 )
 from backscatter.config import Config, Location
+from backscatter.jobs.manager import JobConflict, JobManager
+from backscatter.sites.resolve import resolve_target_site
 from backscatter.store import db
 from backscatter.store import locations as locations_store
+
+# A single click backfills the last 6 hours; the request is hard-capped at 24h so one
+# button press can never kick off a thousand-volume, multi-day pull. 24h sits well
+# inside the default 30-day retention window, so no prune warning is needed here
+# (unlike the CLI, which allows arbitrary ranges) — if MAX_BACKFILL_HOURS is ever
+# raised past the retention window, surface the CLI's older-than-retention warning.
+DEFAULT_BACKFILL_HOURS = 6
+MAX_BACKFILL_HOURS = 24
 
 
 def _parse_ts(value: str | None, label: str) -> datetime | None:
@@ -83,15 +93,30 @@ class LocationUpdate(BaseModel):
     default: bool | None = None
 
 
+class BackfillStart(BaseModel):
+    location: str | None = None  # location name or ICAO; None → default site
+    hours: int = DEFAULT_BACKFILL_HOURS
+
+
 # Frontend lives at the repo-level web/ dir (self-hosted from source). Resolve it
 # relative to this file: src/backscatter/api/app.py -> repo root.
 _DEFAULT_WEB_DIR = Path(__file__).resolve().parents[3] / "web"
 
 
-def create_app(config: Config, *, web_dir: Path | None = None) -> FastAPI:
-    """Build the FastAPI application for a given configuration."""
+def create_app(
+    config: Config,
+    *,
+    web_dir: Path | None = None,
+    job_manager: JobManager | None = None,
+) -> FastAPI:
+    """Build the FastAPI application for a given configuration.
+
+    ``job_manager`` is injectable so tests can supply one wired with a fake S3 client
+    + stub renderer; production builds the real one.
+    """
     web = web_dir or _DEFAULT_WEB_DIR
     renders = renders_dir(config.data_dir)
+    jobs = job_manager or JobManager(config)
 
     # Bootstrap once: schema + seed the location store from env iff empty.
     boot = locations_store.connect_bootstrapped(config)
@@ -245,6 +270,51 @@ def create_app(config: Config, *, web_dir: Path | None = None) -> FastAPI:
         finally:
             conn.close()
         return {"site": resolved_site, "min": mn, "max": mx, "count": count}
+
+    @app.post("/api/backfill", status_code=202)
+    def start_backfill(body: BackfillStart) -> dict[str, object]:
+        """Start a one-click backfill of the last ``hours`` for a location/site.
+
+        Returns the job's initial status (poll ``/api/backfill/{id}``). 409 if a
+        backfill is already running; 400 for an out-of-range ``hours`` or an
+        unknown location.
+        """
+        if not 1 <= body.hours <= MAX_BACKFILL_HOURS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"hours must be between 1 and {MAX_BACKFILL_HOURS}",
+            )
+        now = datetime.now(UTC)
+        start = now - timedelta(hours=body.hours)
+        conn = _conn()
+        try:
+            site = resolve_target_site(conn, config, body.location)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        finally:
+            conn.close()
+        try:
+            return jobs.start(site=site, start=start, end=now)
+        except JobConflict as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "a backfill is already running",
+                    "job": exc.running.to_json(),
+                },
+            ) from exc
+
+    @app.get("/api/backfill")
+    def current_backfill() -> dict[str, object]:
+        """The current/last backfill job (so the UI can restore progress on reload)."""
+        return jobs.current() or {}
+
+    @app.get("/api/backfill/{job_id}")
+    def backfill_status(job_id: str) -> dict[str, object]:
+        job = jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"no backfill job {job_id}")
+        return job
 
     @app.get("/")
     def index() -> FileResponse:

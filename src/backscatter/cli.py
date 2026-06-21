@@ -9,7 +9,6 @@ slice (see docs/ROADMAP.md). ``pull`` (Slice 1), ``site`` (Slice 2), ``render``
 from __future__ import annotations
 
 import argparse
-import sqlite3
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +21,7 @@ if TYPE_CHECKING:
     from backscatter.prune.prune import PruneReport
 from backscatter.ingest.pull import PullStatus, pull_latest
 from backscatter.render.render import render_volume
+from backscatter.sites.resolve import resolve_target_site
 from backscatter.sites.select import rank_sites
 from backscatter.store import locations as locations_store
 
@@ -369,28 +369,6 @@ def _parse_utc(text: str, *, field: str) -> datetime:
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
 
 
-def _resolve_backfill_site(
-    conn: sqlite3.Connection, config: Config, target: str | None
-) -> str:
-    """Resolve a target (location name or ICAO) to a site code.
-
-    Location names win over site codes (a named place is what the user usually
-    means); an unmatched token is treated as an ICAO and validated against the table.
-    """
-    from backscatter.sites.table import site_by_icao
-
-    if target is None:
-        return locations_store.default_location(conn, config.site_override).site
-    lowered = target.lower()
-    for loc in locations_store.current_locations(conn, config.site_override):
-        if loc.name.lower() == lowered:
-            return loc.site
-    icao = target.upper()
-    if site_by_icao(icao) is not None:
-        return icao
-    raise ValueError(f"unknown location or site: {target!r}")
-
-
 def _cmd_backfill(args: argparse.Namespace) -> int:
     import sys
 
@@ -408,7 +386,7 @@ def _cmd_backfill(args: argparse.Namespace) -> int:
     client = s3.make_client()
     conn = locations_store.connect_bootstrapped(config)
     try:
-        site = _resolve_backfill_site(conn, config, args.target)
+        site = resolve_target_site(conn, config, args.target)
         plan = plan_backfill(config, conn, site, start, end, now=now, client=client)
         print(
             f"Backfill {site}  {start:%Y-%m-%d %H:%M}Z … {end:%Y-%m-%d %H:%M}Z: "
