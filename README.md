@@ -24,9 +24,14 @@ nearest covering radar automatically.
        alt="backscatter web UI — live NEXRAD reflectivity on a map with a playback timeline and missing-data gap markers">
 </p>
 
-**Quick links:** [Run with Docker](#run-with-docker-recommended-for-self-hosting) ·
-[Roadmap](docs/ROADMAP.md) · [Contributing](CONTRIBUTING.md) ·
-Docs site *(coming — see the [roadmap](docs/ROADMAP.md))*
+**Quick links:** 📖 **[Documentation](https://kbennett2000.github.io/backscatter/)** ·
+[Get started](https://kbennett2000.github.io/backscatter/get-started/) ·
+[Run with Docker](#run-with-docker-recommended-for-self-hosting) ·
+[Roadmap](docs/ROADMAP.md) · [Contributing](CONTRIBUTING.md)
+
+> **New here?** The **[documentation site](https://kbennett2000.github.io/backscatter/)**
+> walks you from zero to a running app with step-by-step guides for Windows, macOS, and
+> Linux — no technical experience needed.
 
 > **Status:** early / work in progress. Built as a personal project.
 
