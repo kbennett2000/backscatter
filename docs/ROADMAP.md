@@ -254,6 +254,24 @@ Docker robustness, no app behavior change:
   + an entrypoint writability check that prints an actionable `chown` message + a Help
   & FAQ entry.
 
+## Slice 18 — First-run honesty + smart default view
+Make a brand-new (empty) app and a returning (populated) one both immediately legible —
+never a blank, baffling map. Frontend only; reuses the existing read-only frame APIs.
+- **Three distinct states** (were one collapsed "no frames" dead end): **empty archive** →
+  a friendly "collecting now, first frame in ~5 min, updates on its own" card + a
+  load-history link; **wrong time-window** → a visibly different "no radar in this window;
+  you have data from X to Y (local)" card + **Jump to latest**; **has data** → radar.
+  Pure `chooseView` in `web/firstrun.js`, unit-tested like `gaps.js`/`markers.js`.
+- **Default view = latest** (never a back-dated window that may be empty).
+- **Live status cue** near the readout, freshness-honest: "Collecting · last frame 12:56 PM"
+  when fresh, "Last frame … · checking for new radar…" when stale, "waiting for the first
+  frame…" when empty.
+- **Considerate auto-update:** polls `/api/frames/range` (~30s) only on the empty/latest
+  views (and only while visible); the empty card auto-dismisses when the first frame
+  lands; a newer frame on the live view shows a non-intrusive "New radar available" nudge.
+- **Local time** in the readout/frame time/messages (the time *picker* stays UTC — that
+  overhaul is a later clarity slice).
+
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher
 - MRMS national composite at low zoom (wide-area context — the *right* way to use
