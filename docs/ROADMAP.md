@@ -210,6 +210,24 @@ Public-facing polish ahead of the docs site — no app behavior change.
 - **GitHub metadata**: repo description + topics set via `gh`.
 - No cargo-cult community files (no CoC / issue templates / FUNDING / CI yet).
 
+## Slice 16 — Documentation site
+A full docs site for a zero-assumptions, weather-curious audience — plus a developer
+branch. MkDocs Material in `docs/`, deployed to GitHub Pages by a build workflow.
+- **For everyone:** a plain-language [Home](https://kbennett2000.github.io/backscatter/),
+  three click-by-click **platform install guides** (Windows / macOS / Linux, Docker path,
+  nothing assumed), a Configure guide (location + retention in plain words), a Using tour
+  (radar colors, timeline, playback, gaps — with GIFs), and a Help/FAQ.
+- **For developers:** the openness pitch, a fast `uv` local-run path, an architecture
+  page (mermaid pipeline diagram + module map), testing, the CONTRIBUTING expansion, and
+  the ADR index — with ROADMAP + ADRs surfaced in the nav.
+- **Capture automation:** `scripts/capture_docs.py` drives the live app with Playwright
+  and builds GIFs via ffmpeg → real, repeatable screenshots/GIFs (not hand-grabbed).
+- **Tooling isolation:** docs deps are a uv `docs` group — never in the app runtime or
+  Docker image. Win/Mac Docker-Desktop install is text + official link (can't authentically
+  capture those installers); everything else is captured live.
+- **Done when:** `mkdocs build --strict` is clean, the Pages workflow publishes the live
+  site, and a non-technical reader can get from "what is this" to a running app.
+
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher
 - MRMS national composite at low zoom (wide-area context — the *right* way to use
