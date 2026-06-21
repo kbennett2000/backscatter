@@ -17,6 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 
 from backscatter.config import Config, Location
 from backscatter.ingest import s3
@@ -145,21 +146,25 @@ def _collect_location(
     return CycleResult(CycleStatus.NOTHING, location=name)
 
 
-def _render_and_record(
+def render_and_index(
     config: Config,
     conn: sqlite3.Connection,
-    result: PullResult,
-    render_fn: RenderFn,
-    now: datetime,
     *,
-    location: str,
-) -> CycleResult:
-    # STORED guarantees these are set; assert narrows the Optional for the type checker.
-    assert result.path is not None and result.scan_time is not None
-    site, scan_time = result.site, result.scan_time
-    log.info("[%s] stored %s %s; rendering", location, site, _ts(scan_time))
+    volume_path: Path,
+    site: str,
+    scan_time: datetime,
+    now: datetime,
+    render_fn: RenderFn = render_volume,
+    label: str | None = None,
+) -> bool:
+    """Render one stored volume and record it; return whether it rendered.
+
+    The decode→render→``record_render`` seam shared by the collect loop and backfill.
+    On any render error the raw volume is kept and the row is marked ``failed``.
+    """
+    tag = label or site
     try:
-        render = render_fn(result.path, config)
+        render = render_fn(volume_path, config)
         image_path = (
             render.png_path.relative_to(config.data_dir / "renders").as_posix()
         )
@@ -174,20 +179,41 @@ def _render_and_record(
             bounds=render.bounds_wgs84,
             rendered_at=now,
         )
-        log.info(
-            "[%s] rendered %s %s -> %s", location, site, _ts(scan_time), image_path
-        )
-        return CycleResult(
-            CycleStatus.RENDERED, site, scan_time, location=location
-        )
+        log.info("[%s] rendered %s %s -> %s", tag, site, _ts(scan_time), image_path)
+        return True
     except Exception:
         log.exception(
-            "[%s] render failed for %s %s; volume kept", location, site, _ts(scan_time)
+            "[%s] render failed for %s %s; volume kept", tag, site, _ts(scan_time)
         )
         db.mark_render_failed(conn, site, scan_time)
-        return CycleResult(
-            CycleStatus.RENDER_FAILED, site, scan_time, location=location
-        )
+        return False
+
+
+def _render_and_record(
+    config: Config,
+    conn: sqlite3.Connection,
+    result: PullResult,
+    render_fn: RenderFn,
+    now: datetime,
+    *,
+    location: str,
+) -> CycleResult:
+    # STORED guarantees these are set; assert narrows the Optional for the type checker.
+    assert result.path is not None and result.scan_time is not None
+    site, scan_time = result.site, result.scan_time
+    log.info("[%s] stored %s %s; rendering", location, site, _ts(scan_time))
+    rendered = render_and_index(
+        config,
+        conn,
+        volume_path=result.path,
+        site=site,
+        scan_time=scan_time,
+        now=now,
+        render_fn=render_fn,
+        label=location,
+    )
+    status = CycleStatus.RENDERED if rendered else CycleStatus.RENDER_FAILED
+    return CycleResult(status, site, scan_time, location=location)
 
 
 def run_collect(

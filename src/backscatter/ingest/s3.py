@@ -40,17 +40,28 @@ def date_prefix(site: str, date: datetime) -> str:
     return f"{date:%Y/%m/%d}/{site}/"
 
 
-def list_volume_keys(client: S3Client, site: str, date: datetime) -> list[str]:
-    """List assembled ``_V06`` keys under a site's prefix for the given UTC date."""
+def list_volume_objects(
+    client: S3Client, site: str, date: datetime
+) -> list[tuple[str, int]]:
+    """List assembled ``_V06`` ``(key, size_bytes)`` under a site's UTC-date prefix.
+
+    Carries each object's listed size so callers (e.g. backfill's dry-run) can total
+    the download footprint without a HEAD per object.
+    """
     prefix = date_prefix(site, date)
-    keys: list[str] = []
+    objects: list[tuple[str, int]] = []
     paginator = client.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
         for obj in page.get("Contents", []):
             key = obj["Key"]
             if is_volume_key(key):
-                keys.append(key)
-    return keys
+                objects.append((key, int(obj["Size"])))
+    return objects
+
+
+def list_volume_keys(client: S3Client, site: str, date: datetime) -> list[str]:
+    """List assembled ``_V06`` keys under a site's prefix for the given UTC date."""
+    return [key for key, _ in list_volume_objects(client, site, date)]
 
 
 def download_volume(client: S3Client, key: str) -> bytes:

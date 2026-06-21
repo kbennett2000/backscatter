@@ -63,25 +63,21 @@ def _destination(config: Config, site: str, key: str, scan_time: datetime) -> Pa
     return config.data_dir / site / f"{scan_time:%Y%m%d}" / basename
 
 
-def fetch_volume(
+def fetch_key(
     config: Config,
     site: str,
     conn: sqlite3.Connection,
     *,
-    now: datetime,
+    key: str,
     client: S3Client,
 ) -> PullResult:
-    """Find→dedupe→download→index the latest volume for ``site``.
+    """Dedupe→download→index one **known** volume key for ``site``.
 
-    Shared core used by the ``pull`` CLI and the collect loop. Operates on an
-    already-open connection (the caller owns the lifecycle) and an explicit site,
-    so the collect loop can fail over across sites.
+    The ingest half shared by ``fetch_volume`` (latest) and ``backfill`` (historical):
+    the scan time comes from the key, so the caller decides *which* volume to fetch.
+    Idempotent — an already-indexed scan returns ``ALREADY_HAVE`` without downloading.
     """
-    found = find_latest(client, site, now)
-    if found is None:
-        return PullResult(status=PullStatus.NO_VOLUME, site=site)
-    key, scan_time = found
-
+    scan_time = naming.parse_scan_time(key)
     if db.volume_exists(conn, site, scan_time):
         return PullResult(
             status=PullStatus.ALREADY_HAVE,
@@ -111,6 +107,27 @@ def fetch_volume(
         s3_key=key,
         path=dest,
     )
+
+
+def fetch_volume(
+    config: Config,
+    site: str,
+    conn: sqlite3.Connection,
+    *,
+    now: datetime,
+    client: S3Client,
+) -> PullResult:
+    """Find→dedupe→download→index the latest volume for ``site``.
+
+    Shared core used by the ``pull`` CLI and the collect loop. Operates on an
+    already-open connection (the caller owns the lifecycle) and an explicit site,
+    so the collect loop can fail over across sites.
+    """
+    found = find_latest(client, site, now)
+    if found is None:
+        return PullResult(status=PullStatus.NO_VOLUME, site=site)
+    key, _ = found
+    return fetch_key(config, site, conn, key=key, client=client)
 
 
 def pull_latest(
