@@ -56,11 +56,16 @@ def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    # WAL lets the serve process read while the collect process writes; the busy
-    # timeout lets a writer wait out another writer (API edits vs collector) instead
-    # of failing immediately with "database is locked".
+    # WAL lets readers (serve) run while a writer (collect) commits; the busy timeout
+    # lets a writer wait out another writer instead of failing immediately with
+    # "database is locked". There can now be three potential writers across two
+    # processes — the collect loop, a web-triggered backfill job (Slice 19), and API
+    # location edits — so we give the timeout generous headroom. Each write is a
+    # single-statement commit (the slow download/render happens *outside* the write
+    # lock), so the contended critical section is sub-millisecond; 15s is pure
+    # insurance against a pathological collision, never a number we expect to reach.
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA busy_timeout=15000")
     return conn
 
 
