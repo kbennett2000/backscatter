@@ -195,6 +195,21 @@ install. Net-new infra — no app behavior change, no features.
   `docker compose up` serves the UI on the LAN with collect cycling, and the archive +
   seeded locations survive `down`/`up`/rebuild.
 
+## Slice 15 — Banner image + repo polish
+Public-facing polish ahead of the docs site — no app behavior change.
+- **Banner** (`docs/assets/banner.svg` + rendered `banner.png`): on-theme radar-sweep
+  motif in the real NWS dBZ palette (storm cells, range rings, amber sweep beam) +
+  wordmark; PNG rendered from the SVG via headless Chrome.
+- **Hero screenshot** (`docs/assets/screenshot.png`): live reflectivity on the map +
+  the playback timeline with gap markers.
+- **LICENSE** (MIT, matching pyproject); README License section fixed from "TBD" so
+  GitHub detects the license.
+- **README top** rebuilt: banner → tagline → honest static badges (license / python /
+  docker — no fake CI badge) → what-is-this → screenshot → quick links.
+- **CONTRIBUTING.md** stub (dev setup + checks + conventions; expanded by Slice 16).
+- **GitHub metadata**: repo description + topics set via `gh`.
+- No cargo-cult community files (no CoC / issue templates / FUNDING / CI yet).
+
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher
 - MRMS national composite at low zoom (wide-area context — the *right* way to use
