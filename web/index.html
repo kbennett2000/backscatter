@@ -15,6 +15,10 @@
     <div id="map"></div>
     <div id="readout">loading…</div>
     <div id="rangebar" hidden>
+      <span id="locwrap" hidden>
+        <span class="muted">location:</span>
+        <select id="location" aria-label="Active location"></select>
+      </span>
       <span class="muted">window (UTC):</span>
       <input id="start" type="datetime-local" />
       <span class="muted">→</span>

@@ -83,6 +83,17 @@ Home/default) and make `collect` archive all of them continuously.
   produce a single shared frame (no double pull/store), and the API resolves any
   configured location to its site.
 
+## Slice 9 — Location switcher UI
+The runtime piece deferred from Slice 8: an in-UI location selector (frontend only —
+no API/collector changes).
+- A dropdown populated from `/api/locations` (name + resolved site), Home preselected.
+- Selecting a location re-fetches its frames via the `location` param, re-points the
+  timeline/scrubber at that location's archive, and re-centers the map on its lat/lon;
+  per-frame bounds keep a different radar's frames correctly placed. The active
+  location persists across reload (localStorage). Single-location hides the selector.
+- **Done when:** you can switch from Home (KFTG, Elizabeth) to e.g. OKC (KTLX) and the
+  map re-centers and shows that radar's frames, correctly georeferenced.
+
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher
 - MRMS national composite at low zoom (wide-area context — the *right* way to use

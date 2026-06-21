@@ -7,6 +7,7 @@ const RADAR_LAYER = "radar-frame-layer";
 const PRELOAD_AHEAD = 3; // warm the next few PNGs so playback doesn't jank
 const PAGE_SIZE = 20; // frames per request when paging an explicit window
 const PAGE_FETCH_AHEAD = 3; // fetch the next page when this close to the end
+const LS_KEY = "backscatter.location"; // last-selected location, across reloads
 
 const $ = (id) => document.getElementById(id);
 const readout = $("readout");
@@ -19,10 +20,14 @@ const speed = $("speed");
 const startInput = $("start");
 const endInput = $("end");
 const extentLabel = $("extent");
+const locwrap = $("locwrap");
+const locationSelect = $("location");
 
 const state = {
   map: null,
-  site: null,
+  locations: [], // [{name, lat, lon, default, site}] from /api/locations
+  location: null, // active location name (runtime state)
+  site: null, // active location's resolved radar
   frames: [],
   index: 0,
   playing: false,
@@ -68,7 +73,8 @@ function isoMinusHours(iso, hours) {
 }
 
 async function fetchFrames({ start, end, cursor, limit }) {
-  const p = new URLSearchParams({ site: state.site });
+  // Server resolves the active location to its radar (Slice 8 `location` param).
+  const p = new URLSearchParams({ location: state.location });
   if (start) p.set("start", start);
   if (end) p.set("end", end);
   if (cursor) p.set("cursor", cursor);
@@ -77,16 +83,58 @@ async function fetchFrames({ start, end, cursor, limit }) {
 }
 
 async function main() {
-  const config = await fetch("/api/config").then((r) => r.json());
-  state.site = config.site;
+  const [, locData] = await Promise.all([
+    fetch("/api/config").then((r) => r.json()),
+    fetch("/api/locations").then((r) => r.json()),
+  ]);
+  state.locations = locData.locations || [];
+  const active = pickInitialLocation();
+  state.location = active.name;
+  state.site = active.site;
+  populateSelector(active.name);
+
   state.map = new maplibregl.Map({
     container: "map",
     style: BASEMAP_STYLE,
-    center: config.center,
+    center: [active.lon, active.lat],
     zoom: 7,
   });
   state.map.addControl(new maplibregl.NavigationControl(), "top-right");
   state.map.on("load", init);
+}
+
+function pickInitialLocation() {
+  const saved = localStorage.getItem(LS_KEY);
+  return (
+    state.locations.find((l) => l.name === saved) ||
+    state.locations.find((l) => l.default) ||
+    state.locations[0]
+  );
+}
+
+function populateSelector(activeName) {
+  locationSelect.innerHTML = "";
+  for (const loc of state.locations) {
+    const opt = document.createElement("option");
+    opt.value = loc.name;
+    opt.textContent = `${loc.name} · ${loc.site}`;
+    locationSelect.appendChild(opt);
+  }
+  locationSelect.value = activeName;
+  // A single location renders exactly as before — no point offering a switcher.
+  locwrap.hidden = state.locations.length < 2;
+}
+
+async function switchLocation(name) {
+  const loc = state.locations.find((l) => l.name === name);
+  if (!loc) return;
+  pause();
+  state.location = loc.name;
+  state.site = loc.site;
+  localStorage.setItem(LS_KEY, loc.name);
+  state.map.flyTo({ center: [loc.lon, loc.lat], zoom: 7 });
+  await refreshExtent();
+  await loadDefault(); // re-point the timeline at this location's recent window
 }
 
 async function init() {
@@ -96,8 +144,8 @@ async function init() {
 }
 
 async function refreshExtent() {
-  const r = await fetch(`/api/frames/range?site=${enc(state.site)}`).then((x) =>
-    x.json(),
+  const r = await fetch(`/api/frames/range?location=${enc(state.location)}`).then(
+    (x) => x.json(),
   );
   state.extent = { min: r.min, max: r.max, count: r.count };
   if (r.min && r.max) {
@@ -148,13 +196,15 @@ function applyFrames(data, { replace, jumpTo }) {
 
   if (state.frames.length === 0) {
     timeline.hidden = true;
+    setRadarVisible(false); // don't leave a stale frame from the previous location
     readout.textContent = replace
-      ? "No frames in this range."
+      ? `${state.location} · no frames in this range.`
       : readout.textContent;
     return;
   }
 
   ensureLayer(state.frames[0]);
+  setRadarVisible(true);
   timeline.hidden = false;
   scrubber.max = String(state.frames.length - 1);
   const single = state.frames.length < 2;
@@ -168,6 +218,15 @@ function applyFrames(data, { replace, jumpTo }) {
     // Appended a page: keep position, just reflect the new length.
     readoutFor(state.index);
   }
+}
+
+function setRadarVisible(visible) {
+  if (!state.layerReady) return;
+  state.map.setLayoutProperty(
+    RADAR_LAYER,
+    "visibility",
+    visible ? "visible" : "none",
+  );
 }
 
 function ensureLayer(frame) {
@@ -204,7 +263,7 @@ function goTo(i) {
 function readoutFor(i) {
   const f = state.frames[i];
   readout.textContent =
-    `${f.site} · ${fmtTime(f.scan_time)} · ` +
+    `${state.location} · ${f.site} · ${fmtTime(f.scan_time)} · ` +
     `${f.elevation_deg.toFixed(1)}° · ${i + 1}/${state.frames.length}`;
 }
 
@@ -245,6 +304,9 @@ function pause() {
 
 function wireControls() {
   rangebar.hidden = false;
+  locationSelect.addEventListener("change", () =>
+    switchLocation(locationSelect.value),
+  );
   scrubber.addEventListener("input", () => {
     pause();
     goTo(Number(scrubber.value));
