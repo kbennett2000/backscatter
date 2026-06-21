@@ -365,6 +365,29 @@ backend**, by recoloring the source PNG in a canvas (RGB→bucket→drop-low-buc
 clear-air / remap-to-other-ramp for a RadarScope-style palette). Shared canvas-LUT pipeline +
 a visual-correctness pass; its own slice rather than bloating Slice 23.
 
+## Slice 25 — Freshness UX + tighter polling (the cheap lag fixes)
+From a lag investigation: vs RadarScope we're ~5–10 min behind, but that's ~90% the
+assembled-bucket choice by design (measured: an assembled `_V06` lands in S3 a **median ~309 s
+after the volume's start** — the whole volume must finish/assemble/upload). Only ~1 min was
+avoidable, and the "no Latest / feels stuck" report was two UX gaps, **not a data bug** (the
+frame queries are consistent; Latest works). This slice does the cheap fixes:
+- **Tighter polling:** collect 60 s → 30 s, frontend `POLL_MS` 30 s → 10 s — a freshly-rendered
+  frame surfaces in ~10–40 s (measured 6.1 s in the proof) vs ~30–150 s.
+- **Reachable Latest on mobile:** the freshness cue (always on-screen) is now a tappable
+  "go to latest" control — on a phone the `#latest` button is otherwise buried in the Window
+  drawer. Desktop unchanged (Latest stays inline).
+- **Honest data-age:** the cue shows "● Live · last frame N min ago" (pure `relativeAge`,
+  floored), dropping the badge when scrubbed back — so a normal 5–9-min-old frame reads as the
+  source lag, not a freeze. Deliberately does NOT claim the latency is solved.
+
+## Next big one — Near-real-time via the chunks bucket
+The only way to beat the ~5-min assembled-bucket floor (to ~1–2 min, RadarScope-class). ADR-
+0001 deferred it. Takes a chunks ingestor (`unidata-nexrad-level2-chunks`, rotating volume
+dirs) + partial-volume assembly (concatenate bzip2 chunks; the 0.5° cut is first, so render it
+before the full volume finishes; likely MetPy `Level2File` over a `BytesIO`) + incomplete-
+volume handling. Hybrid: keep the assembled bucket for the archive/backfill, add the chunks
+path only for the live frame. Real multi-step feature — its own slice (maybe two).
+
 ## Later (not scheduled yet)
 - **Storm track lines / motion vectors** — parked as a real computer-vision effort (cell
   identification + tracking across frames), not a quick slice.
