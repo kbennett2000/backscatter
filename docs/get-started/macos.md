@@ -108,7 +108,12 @@ start.
 
 Open your web browser and go to:
 
-**<http://localhost:8000>**
+**<http://localhost:8085>**
+
+!!! tip "Want a different port?"
+    `8085` is the default. If it's already taken — or you just prefer another number —
+    change `BACKSCATTER_PORT` in your `.env` file, run `docker compose up -d` again, and
+    use that number here instead.
 
 You should see a map centered on your location, like this:
 

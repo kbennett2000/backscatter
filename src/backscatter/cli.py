@@ -83,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
         "serve", help=serve_help, description=serve_help
     )
     serve_parser.add_argument("--host", default="0.0.0.0", help="Bind host.")
-    serve_parser.add_argument("--port", type=int, default=8000, help="Bind port.")
+    serve_parser.add_argument("--port", type=int, default=8085, help="Bind port.")
 
     collect_help = "Continuously pull, render, and index the latest frames."
     collect_parser = subparsers.add_parser(

@@ -43,7 +43,8 @@ ENV PATH="/app/.venv/bin:$PATH" \
     MPLCONFIGDIR=/tmp/mpl \
     HOME=/tmp \
     BACKSCATTER_DATA_DIR=/data \
-    BACKSCATTER_DB_PATH=/data/backscatter.db
+    BACKSCATTER_DB_PATH=/data/backscatter.db \
+    BACKSCATTER_PORT=8085
 
-EXPOSE 8000
+EXPOSE 8085
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

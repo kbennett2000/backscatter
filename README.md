@@ -78,8 +78,9 @@ docker compose up -d --build  # build the image and start both processes
 docker compose logs -f        # watch collect cycles
 ```
 
-Open the map at `http://<host-ip>:8000` from any device on your LAN (set `PORT` in
-`.env` to change the published port; the container always serves on 8000 internally).
+Open the map at `http://<host-ip>:8085` from any device on your LAN (set
+`BACKSCATTER_PORT` in `.env` to change the port — it's the single value used both inside
+the container and published to your network).
 
 - **Where data lives:** everything — raw volumes, rendered PNGs, and the SQLite DB —
   is written to **`./data`** in this directory (bind-mounted to `/data` in the
@@ -108,7 +109,7 @@ Early build — a few commands work end to end:
 ```
 uv run backscatter pull              # fetch the latest volume for the configured site
 uv run backscatter render <volume>   # render one georeferenced frame (PNG + bounds)
-uv run backscatter serve             # serve the map UI at http://<host>:8000
+uv run backscatter serve             # serve the map UI at http://<host>:8085
 uv run backscatter prune --dry-run   # preview what retention would delete (no deletes)
 uv run backscatter backfill KFTG --start 2026-06-01T00:00:00Z --end 2026-06-02T00:00:00Z --dry-run
 ```

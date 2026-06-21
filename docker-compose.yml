@@ -15,7 +15,8 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "${PORT:-8000}:8000"
+      # One value drives both the published and the in-container port (default 8085).
+      - "${BACKSCATTER_PORT:-8085}:${BACKSCATTER_PORT:-8085}"
     volumes:
       - ./data:/data # the archive + DB (host-mounted, survives rebuilds)
     # Run as your host user so the ./data bind mount is writable without root.
@@ -26,7 +27,7 @@ services:
         - CMD
         - python
         - -c
-        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/config')
+        - import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('BACKSCATTER_PORT','8085')+'/api/config')
       interval: 30s
       timeout: 5s
       retries: 3

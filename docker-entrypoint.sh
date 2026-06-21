@@ -14,15 +14,18 @@ term() {
 }
 trap term TERM INT
 
+# The served (and published) port — one value, from the environment.
+port="${BACKSCATTER_PORT:-8085}"
+
 # Server first. create_app() bootstraps + seeds the SQLite store synchronously on
 # startup, so by the time the API answers, the DB exists and locations are seeded.
-backscatter serve --host 0.0.0.0 --port 8000 &
+backscatter serve --host 0.0.0.0 --port "$port" &
 serve=$!
 
 # Wait for the API before starting collect — this staggering avoids the empty-DB seed
 # race when both processes hit a fresh mounted volume at the same instant.
 for _ in $(seq 1 60); do
-  if python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/config')" 2>/dev/null; then
+  if python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${port}/api/config')" 2>/dev/null; then
     break
   fi
   # Bail early if the server died during startup.

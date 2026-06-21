@@ -37,7 +37,7 @@ no module reads the environment directly.
 backscatter is one CLI with a few subcommands:
 
 ```bash
-uv run backscatter serve        # the web UI + API at http://localhost:8000
+uv run backscatter serve        # the web UI + API at http://localhost:8085
 uv run backscatter collect      # the continuous collector (pull → render → index)
 ```
 

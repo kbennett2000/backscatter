@@ -53,17 +53,17 @@ backscatter runs inside Docker, so Docker has to be on:
 - **Linux:** start it with `sudo systemctl start docker` (and `sudo systemctl enable
   docker` to start it automatically at boot).
 
-## "Port is already in use" / port 8000 is taken
+## "Port is already in use" / port 8085 is taken
 
-Something else on your computer is using address `8000`. Pick a different one: open your
+Something else on your computer is using address `8085`. Pick a different one: open your
 `.env` file, change
 
 ```
-PORT=8000
+BACKSCATTER_PORT=8085
 ```
 
-to, say, `PORT=8080`, save, and run `docker compose up -d` again. Then open
-**http://localhost:8080** instead.
+to, say, `BACKSCATTER_PORT=9000`, save, and run `docker compose up -d` again. Then open
+**http://localhost:9000** instead.
 
 ## Where is my saved radar kept?
 
@@ -99,7 +99,7 @@ Your `data` folder and your `.env` are kept.
 
 Yes, if it's on the same home network (Wi-Fi). Find the IP address of the computer running
 backscatter (e.g. `192.168.1.50`) and, on the other device, open
-**http://192.168.1.50:8000**.
+**http://192.168.1.50:8085**.
 
 ??? question "How do I find that computer's IP address?"
     **Windows:** run `ipconfig` and look for "IPv4 Address". **Mac:** System Settings →

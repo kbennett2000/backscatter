@@ -85,11 +85,25 @@ BACKSCATTER_RETENTION_DAYS=0
     `docker compose up -d` in the project folder to apply them. (Location changes you make
     *in the app* apply right away — no restart needed.)
 
+## Changing the port
+
+backscatter opens at **`http://localhost:8085`** by default. If `8085` is already used by
+something else on your computer — or you just prefer a different number — change one line
+in your `.env` file:
+
+```
+BACKSCATTER_PORT=8085
+```
+
+Set it to, say, `9000`, save, and run `docker compose up -d` in the project folder to
+apply it. Then open **`http://localhost:9000`** instead. That single value is used both
+inside the app and for the address you open — there's nothing else to change.
+
 ## What else is in `.env`?
 
 A few more optional dials, all explained with comments inside the file:
 
-- `PORT` — the web address port (default `8000`, i.e. `http://localhost:8000`).
+- `BACKSCATTER_PORT` — the web address port (default `8085`; see above).
 - `BACKSCATTER_POLL_INTERVAL` — how often it checks for new radar (default 60 seconds;
   you rarely need to change this).
 - `PUID` / `PGID` — Linux file-ownership (see the [Linux guide](get-started/linux.md)).
