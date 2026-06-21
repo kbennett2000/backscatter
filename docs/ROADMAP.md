@@ -228,6 +228,21 @@ branch. MkDocs Material in `docs/`, deployed to GitHub Pages by a build workflow
 - **Done when:** `mkdocs build --strict` is clean, the Pages workflow publishes the live
   site, and a non-technical reader can get from "what is this" to a running app.
 
+## Slice 17 — Location pins + configurable port + README GIF
+Three batched changes; no new product behavior beyond the pins.
+- **Labelled location pins:** a marker for every configured location, drawn from the
+  existing `/api/locations` (no backend change) as a MapLibre circle + text layer. The
+  active location is amber/larger, the others muted white; labels collide-hide so close
+  names stay readable; pins sit above the radar and are click-through. They update live
+  on switch and on the location CRUD path. Pure GeoJSON builder (`web/markers.js`)
+  unit-tested with `node --test`, like `gaps.js`.
+- **Single configurable port:** `BACKSCATTER_PORT` (default **8085**) replaces hardcoded
+  `8000` everywhere — one env value drives the in-container and published port and the
+  healthcheck; the CLI `serve` default is 8085. Docs/README updated with a plain-language
+  "changing the port" note.
+- **README:** hero repointed to the re-captured (pinned) `app-overview.png`; playback GIF
+  embedded; capture script re-run so all map imagery shows the pins.
+
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher
 - MRMS national composite at low zoom (wide-area context — the *right* way to use
