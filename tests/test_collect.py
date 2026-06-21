@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import boto3
@@ -421,3 +422,64 @@ def test_run_collect_drops_deleted_location_next_cycle(
     conn = _open_db(config)
     # OKC was deleted before cycle 2, so the day-2 KTLX volume was never collected.
     assert db.latest_rendered_frame(conn, "KTLX") is None
+
+
+# --- retention: throttled prune in the loop ----------------------------------
+
+
+def _prune_spy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[datetime]:
+    """Replace run_prune in the loop with a spy recording the ``now`` it saw."""
+    seen: list[datetime] = []
+
+    def spy(conn: object, config: Config, *, now: datetime, dry_run: bool) -> None:
+        seen.append(now)
+
+    monkeypatch.setattr("backscatter.collect.collect.run_prune", spy)
+    return seen
+
+
+def test_loop_prunes_first_cycle_then_throttled(
+    tmp_path: Path, s3_client: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)  # age default ON → retention active; interval 3600s
+    seen = _prune_spy(monkeypatch)
+    base = datetime(2026, 6, 20, 12, 0, tzinfo=UTC)
+    nows = iter([base, base + timedelta(seconds=60), base + timedelta(seconds=120)])
+
+    run_collect(
+        config, now_fn=lambda: next(nows), client=s3_client,
+        render_fn=_stub_render(), max_cycles=3,
+    )
+    # Three cycles within 120s of each other and a 3600s interval → pruned once.
+    assert seen == [base]
+
+
+def test_loop_prunes_each_cycle_once_interval_elapses(
+    tmp_path: Path, s3_client: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)  # interval 3600s
+    seen = _prune_spy(monkeypatch)
+    base = datetime(2026, 6, 20, 12, 0, tzinfo=UTC)
+    nows = iter([base, base + timedelta(hours=2), base + timedelta(hours=4)])
+
+    run_collect(
+        config, now_fn=lambda: next(nows), client=s3_client,
+        render_fn=_stub_render(), max_cycles=3,
+    )
+    # Each cycle is >1h after the last prune → prunes every cycle.
+    assert len(seen) == 3
+
+
+def test_loop_skips_prune_when_retention_off(
+    tmp_path: Path, s3_client: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = replace(_config(tmp_path), retention_max_age_days=None)  # no policy
+    seen = _prune_spy(monkeypatch)
+
+    run_collect(
+        config, now_fn=lambda: _NOW, client=s3_client,
+        render_fn=_stub_render(), max_cycles=2,
+    )
+    assert seen == []  # no policy active → prune never runs

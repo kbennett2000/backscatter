@@ -22,6 +22,7 @@ from backscatter.config import Config, Location
 from backscatter.ingest import s3
 from backscatter.ingest.pull import PullResult, PullStatus, fetch_volume
 from backscatter.ingest.s3 import S3Client
+from backscatter.prune.prune import run_prune
 from backscatter.render.render import RenderResult, render_volume
 from backscatter.sites.select import RankedSite, rank_sites
 from backscatter.sites.table import site_by_icao
@@ -206,7 +207,9 @@ def run_collect(
     conn = locations_store.connect_bootstrapped(config)
     try:
         cycles = 0
+        last_prune_at: datetime | None = None
         while not stop_event.is_set() and (max_cycles is None or cycles < max_cycles):
+            now = now_fn()
             try:
                 # Re-read locations each cycle so UI edits take effect without a
                 # restart: a new location starts archiving next cycle, a deleted
@@ -216,11 +219,22 @@ def run_collect(
                 )
                 collect_cycle(
                     locations, config, conn,
-                    now=now_fn(), client=client, render_fn=render_fn,
+                    now=now, client=client, render_fn=render_fn,
                 )
             except Exception:
                 # One bad cycle (network/S3/decode) must not end collection.
                 log.exception("collect cycle errored; backing off and continuing")
+            # Throttled retention pass: self-bounds the archive without a separate
+            # cron. Runs the first cycle, then at most once per prune_interval_s. A
+            # prune failure must not end collection either.
+            if config.retention_active and _prune_due(
+                now, last_prune_at, config.prune_interval_s
+            ):
+                last_prune_at = now
+                try:
+                    run_prune(conn, config, now=now, dry_run=False)
+                except Exception:
+                    log.exception("prune pass errored; continuing")
             cycles += 1
             if stop_event.is_set() or (max_cycles is not None and cycles >= max_cycles):
                 break
@@ -228,3 +242,12 @@ def run_collect(
             stop_event.wait(config.poll_interval_s)
     finally:
         conn.close()
+
+
+def _prune_due(
+    now: datetime, last_prune_at: datetime | None, interval_s: float
+) -> bool:
+    """Whether a throttled prune should run now (always on the first cycle)."""
+    if last_prune_at is None:
+        return True
+    return (now - last_prune_at).total_seconds() >= interval_s
