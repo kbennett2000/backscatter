@@ -200,8 +200,8 @@ Public-facing polish ahead of the docs site — no app behavior change.
 - **Banner** (`docs/assets/banner.svg` + rendered `banner.png`): on-theme radar-sweep
   motif in the real NWS dBZ palette (storm cells, range rings, amber sweep beam) +
   wordmark; PNG rendered from the SVG via headless Chrome.
-- **Hero screenshot** (`docs/assets/screenshot.png`): live reflectivity on the map +
-  the playback timeline with gap markers.
+- **Hero screenshot**: live reflectivity on the map + the playback timeline with gap
+  markers (later superseded by the pinned `app-overview.png` in Slice 17).
 - **LICENSE** (MIT, matching pyproject); README License section fixed from "TBD" so
   GitHub detects the license.
 - **README top** rebuilt: banner → tagline → honest static badges (license / python /

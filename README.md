@@ -20,8 +20,17 @@ works for **any location in the continental US**: point it at a lat/lon and it p
 nearest covering radar automatically.
 
 <p align="center">
-  <img src="docs/assets/screenshot.png" width="100%"
-       alt="backscatter web UI — live NEXRAD reflectivity on a map with a playback timeline and missing-data gap markers">
+  <img src="docs/assets/app-overview.png" width="100%"
+       alt="backscatter web UI — live NEXRAD reflectivity on a map, labelled location pins, and a playback timeline with gap markers">
+</p>
+
+### See it in action
+
+Scrub and replay every frame it has collected — a DVR for the sky:
+
+<p align="center">
+  <img src="docs/assets/playback.gif" width="100%"
+       alt="Playing back recent radar frames on the backscatter map">
 </p>
 
 **Quick links:** 📖 **[Documentation](https://kbennett2000.github.io/backscatter/)** ·
