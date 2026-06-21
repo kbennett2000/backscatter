@@ -53,15 +53,19 @@
       </span>
       <button id="manage" type="button">⚙ Locations</button>
       <button id="theme" type="button" title="Toggle light/dark" aria-label="Toggle light/dark"></button>
-      <span class="muted">window (UTC):</span>
-      <input id="start" type="datetime-local" />
-      <span class="muted">→</span>
-      <input id="end" type="datetime-local" />
-      <button id="load" type="button">Load</button>
-      <button class="preset" data-hours="6" type="button">6h</button>
-      <button class="preset" data-hours="24" type="button">24h</button>
-      <button id="latest" type="button">Latest</button>
-      <span id="extent" class="muted"></span>
+      <button id="wintoggle" type="button" title="Time window" aria-label="Time window">🕘 Window</button>
+      <!-- display:contents on desktop (flows inline into #rangebar); a drawer on mobile. -->
+      <div id="windowctl">
+        <span class="muted wintitle">window (UTC):</span>
+        <input id="start" type="datetime-local" />
+        <span class="muted">→</span>
+        <input id="end" type="datetime-local" />
+        <button id="load" type="button">Load</button>
+        <button class="preset" data-hours="6" type="button">6h</button>
+        <button class="preset" data-hours="24" type="button">24h</button>
+        <button id="latest" type="button">Latest</button>
+        <span id="extent" class="muted"></span>
+      </div>
     </div>
     <div id="locpanel" hidden>
       <h3>Locations</h3>
@@ -102,6 +106,7 @@
     <script src="/static/markers.js"></script>
     <script src="/static/firstrun.js"></script>
     <script src="/static/backfill.js"></script>
+    <script src="/static/layout.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>

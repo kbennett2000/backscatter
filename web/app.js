@@ -40,6 +40,8 @@ const locwrap = $("locwrap");
 const locationSelect = $("location");
 const manageBtn = $("manage");
 const themeBtn = $("theme");
+const winToggle = $("wintoggle");
+const windowctl = $("windowctl");
 const locpanel = $("locpanel");
 const loclist = $("loclist");
 const locform = $("locform");
@@ -845,11 +847,22 @@ function wireControls() {
   manageBtn.addEventListener("click", () => {
     locpanel.hidden = !locpanel.hidden;
     if (!locpanel.hidden) {
+      windowctl.classList.remove("open"); // mobile: one drawer at a time
       startAdd();
       renderLocList();
     }
   });
   themeBtn.addEventListener("click", () => applyTheme(nextTheme(currentTheme())));
+  // Mobile-only: the window/time controls live in a drawer toggled by this button.
+  winToggle.addEventListener("click", () => {
+    const open = nextOpen(windowctl.classList.contains("open"));
+    windowctl.classList.toggle("open", open);
+    if (open) locpanel.hidden = true; // mutual-exclude with the Locations panel
+  });
+  // Crossing back to desktop width: the drawer is always-inline there, so drop the class.
+  window.addEventListener("resize", () => {
+    if (!isMobile(window.innerWidth)) windowctl.classList.remove("open");
+  });
   locform.addEventListener("submit", submitForm);
   $("lf-reset").addEventListener("click", startAdd);
   $("lf-pick").addEventListener("click", () => {

@@ -299,6 +299,17 @@ body {
   line-height: 1;
 }
 
+/* The window-controls group flows inline on desktop (its children become flex items of
+   #rangebar); on mobile it collapses into a drawer (see the media query). The mobile-only
+   toggle is hidden on desktop. */
+#windowctl {
+  display: contents;
+}
+
+#rangebar #wintoggle {
+  display: none;
+}
+
 #locpanel {
   position: absolute;
   z-index: 3;
