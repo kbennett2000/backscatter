@@ -243,6 +243,17 @@ Three batched changes; no new product behavior beyond the pins.
 - **README:** hero repointed to the re-captured (pinned) `app-overview.png`; playback GIF
   embedded; capture script re-run so all map imagery shows the pins.
 
+## Maintenance fixes (post-Slice-17)
+Docker robustness, no app behavior change:
+- **Build perf:** removed a redundant `chmod -R a+rX /app` that recursed the ~36k-file
+  scientific-stack venv (~150s on a home server) to set perms uv already produces; the
+  entrypoint exec bit is set with `COPY --chmod` instead.
+- **Fresh-deploy crash:** a missing `./data` was auto-created by Docker as root, so the
+  non-root container couldn't write the DB ("unable to open database file" crash-loop).
+  Fixed with a tracked empty `data/.gitkeep` (the dir exists owned by the cloning user)
+  + an entrypoint writability check that prints an actionable `chown` message + a Help
+  & FAQ entry.
+
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher
 - MRMS national composite at low zoom (wide-area context — the *right* way to use
