@@ -34,9 +34,10 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY --from=builder /app /app
-COPY docker-entrypoint.sh /app/docker-entrypoint.sh
-# World-readable/executable so any (non-root) UID compose assigns can run the venv.
-RUN chmod +x /app/docker-entrypoint.sh && chmod -R a+rX /app
+# uv installs the venv world-readable (644/755) already, so the non-root host UID compose
+# assigns can read/traverse/run it as-is — no recursive chmod over the ~36k scientific-
+# stack files needed. Only the entrypoint needs its exec bit, set here at copy time.
+COPY --chmod=0755 docker-entrypoint.sh /app/docker-entrypoint.sh
 
 ENV PATH="/app/.venv/bin:$PATH" \
     MPLBACKEND=Agg \
