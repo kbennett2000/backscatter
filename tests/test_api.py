@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 import numpy as np
 from fastapi.testclient import TestClient
@@ -215,3 +216,73 @@ def test_frames_site_filter_and_default(tmp_path: Path) -> None:
 def test_frames_bad_timestamp_is_400(tmp_path: Path) -> None:
     resp = TestClient(create_app(_config(tmp_path))).get("/api/frames?start=nope")
     assert resp.status_code == 400
+
+
+# --- Slice 7: archive navigation (range + cursor pagination) -----------------
+
+
+def _seed_n(config: Config, n: int) -> list[str]:
+    times = []
+    for i in range(n):
+        t = f"2026-06-20T12:{i:02d}:00+00:00"
+        _seed_frame(config, volume=f"KFTG20260620_12{i:02d}00_V06", scan_time=t)
+        times.append(t)
+    return times
+
+
+def test_frames_range_endpoint(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    times = _seed_n(config, 3)
+    client = TestClient(create_app(config))
+    body = client.get("/api/frames/range").json()
+    assert body == {"site": "KFTG", "min": times[0], "max": times[-1], "count": 3}
+
+
+def test_frames_range_endpoint_empty(tmp_path: Path) -> None:
+    body = TestClient(create_app(_config(tmp_path))).get("/api/frames/range").json()
+    assert body == {"site": "KFTG", "min": None, "max": None, "count": 0}
+
+
+def test_frames_default_next_cursor_null(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed_n(config, 3)
+    body = TestClient(create_app(config)).get("/api/frames").json()
+    assert body["next_cursor"] is None
+    assert body["count"] == 3
+
+
+def test_frames_window_over_cap_paginates_cleanly(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    times = _seed_n(config, 5)
+    client = TestClient(create_app(config))
+    window = "start=2026-06-20T12:00:00Z&end=2026-06-20T12:59:00Z"
+
+    seen: list[str] = []
+    cursor: str | None = None
+    pages = 0
+    while True:
+        url = f"/api/frames?{window}&limit=2"
+        if cursor is not None:
+            url += f"&cursor={quote(cursor)}"
+        body = client.get(url).json()
+        pages += 1
+        seen.extend(f["scan_time"] for f in body["frames"])
+        cursor = body["next_cursor"]
+        if cursor is None:
+            break
+        assert len(body["frames"]) == 2  # full pages until the last
+    assert seen == times  # contiguous, ordered
+    assert len(seen) == len(set(seen)) == 5  # no dupes
+    assert pages == 3
+
+
+def test_frames_window_empty_range_has_null_cursor(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed_n(config, 3)
+    resp = TestClient(create_app(config)).get(
+        "/api/frames?start=2027-01-01T00:00:00Z"
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["frames"] == []
+    assert body["next_cursor"] is None

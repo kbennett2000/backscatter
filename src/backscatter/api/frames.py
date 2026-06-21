@@ -83,6 +83,29 @@ def frames_in_range(
     end: datetime | None = None,
     limit: int = DEFAULT_FRAMES_LIMIT,
 ) -> list[FrameMeta]:
-    """Rendered frames for a site over a time range, oldest-first (for playback)."""
+    """Most-recent `limit` rendered frames for a site, oldest-first (the default)."""
     rows = db.rendered_frames(conn, site=site, start=start, end=end, limit=limit)
     return [_frame_from_row(row) for row in rows]
+
+
+def frames_window(
+    conn: sqlite3.Connection,
+    *,
+    site: str,
+    start: datetime | None,
+    end: datetime | None,
+    after: datetime | None,
+    limit: int,
+) -> list[FrameMeta]:
+    """One ascending page of frames for forward cursor-pagination."""
+    rows = db.frames_window(
+        conn, site=site, start=start, end=end, after=after, limit=limit
+    )
+    return [_frame_from_row(row) for row in rows]
+
+
+def frames_extent(
+    conn: sqlite3.Connection, *, site: str
+) -> tuple[str | None, str | None, int]:
+    """(min scan_time, max scan_time, count) of rendered frames for a site."""
+    return db.frames_extent(conn, site=site)

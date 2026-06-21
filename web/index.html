@@ -14,6 +14,17 @@
   <body>
     <div id="map"></div>
     <div id="readout">loading…</div>
+    <div id="rangebar" hidden>
+      <span class="muted">window (UTC):</span>
+      <input id="start" type="datetime-local" />
+      <span class="muted">→</span>
+      <input id="end" type="datetime-local" />
+      <button id="load" type="button">Load</button>
+      <button class="preset" data-hours="6" type="button">6h</button>
+      <button class="preset" data-hours="24" type="button">24h</button>
+      <button id="latest" type="button">Latest</button>
+      <span id="extent" class="muted"></span>
+    </div>
     <div id="timeline" hidden>
       <button id="play" type="button" aria-label="Play/pause">▶</button>
       <input id="scrubber" type="range" min="0" max="0" value="0" step="1" />

@@ -33,6 +33,46 @@ body {
   max-width: 60ch;
 }
 
+#rangebar {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font: 12px/1.4 system-ui, sans-serif;
+}
+
+#rangebar[hidden] {
+  display: none;
+}
+
+#rangebar .muted {
+  opacity: 0.7;
+}
+
+#rangebar input {
+  font: inherit;
+}
+
+#rangebar button {
+  font: inherit;
+  cursor: pointer;
+  border: 0;
+  border-radius: 4px;
+  padding: 3px 8px;
+  background: #fff;
+  color: #000;
+}
+
 #timeline {
   position: absolute;
   z-index: 2;

@@ -17,7 +17,9 @@ from fastapi.staticfiles import StaticFiles
 from backscatter.api.frames import (
     DEFAULT_FRAMES_LIMIT,
     MAX_FRAMES_LIMIT,
+    frames_extent,
     frames_in_range,
+    frames_window,
     latest_frame,
     renders_dir,
 )
@@ -68,31 +70,61 @@ def create_app(config: Config, *, web_dir: Path | None = None) -> FastAPI:
         site: str | None = None,
         start: str | None = None,
         end: str | None = None,
+        cursor: str | None = None,
         limit: int = Query(DEFAULT_FRAMES_LIMIT, ge=1),
     ) -> dict[str, object]:
-        """Rendered frames for a site over a range, oldest-first (for the timeline).
+        """Rendered frames for a site, oldest-first (for the timeline).
 
-        Defaults to the configured site and the most recent ``limit`` frames
-        (capped at MAX_FRAMES_LIMIT). An empty range returns 200 with no frames.
+        Two modes, both capped at MAX_FRAMES_LIMIT per request:
+        - No ``start`` and no ``cursor`` → the most recent ``limit`` frames
+          (the default rolling window). ``next_cursor`` is null.
+        - With ``start`` and/or ``cursor`` → one ascending page of the
+          ``[start, end]`` window. ``cursor`` is an exclusive lower bound
+          (a prior frame's ``scan_time``); pass back ``next_cursor`` to page
+          forward through a window deeper than the cap. Empty range → 200, [].
         """
         resolved_site = (site or config.site).upper()
         start_dt = _parse_ts(start, "start")
         end_dt = _parse_ts(end, "end")
+        cursor_dt = _parse_ts(cursor, "cursor")
         capped = min(limit, MAX_FRAMES_LIMIT)
 
         conn = db.connect(config.db_path)
         try:
-            frames = frames_in_range(
-                conn, site=resolved_site, start=start_dt, end=end_dt, limit=capped
-            )
+            if start_dt is None and cursor_dt is None:
+                frames = frames_in_range(
+                    conn, site=resolved_site, start=None, end=end_dt, limit=capped
+                )
+                next_cursor: str | None = None
+            else:
+                # Fetch one extra to detect whether another page exists.
+                page = frames_window(
+                    conn, site=resolved_site, start=start_dt, end=end_dt,
+                    after=cursor_dt, limit=capped + 1,
+                )
+                has_more = len(page) > capped
+                frames = page[:capped]
+                next_cursor = frames[-1].scan_time if has_more else None
         finally:
             conn.close()
         return {
             "site": resolved_site,
             "count": len(frames),
             "limit": capped,
+            "next_cursor": next_cursor,
             "frames": [f.to_json() for f in frames],
         }
+
+    @app.get("/api/frames/range")
+    def api_frames_range(site: str | None = None) -> dict[str, object]:
+        """Earliest/latest rendered scan_time + count for a site (archive extent)."""
+        resolved_site = (site or config.site).upper()
+        conn = db.connect(config.db_path)
+        try:
+            mn, mx, count = frames_extent(conn, site=resolved_site)
+        finally:
+            conn.close()
+        return {"site": resolved_site, "min": mn, "max": mx, "count": count}
 
     @app.get("/")
     def index() -> FileResponse:

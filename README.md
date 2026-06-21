@@ -62,9 +62,14 @@ configured location, with a **timeline scrubber + play/pause** over every frame
 `backscatter collect` for a while first to build up frames (one every ~5 min).
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for build status.
 
-The timeline is driven by `GET /api/frames?site=&start=&end=&limit=` — rendered
-frames from the index, oldest-first, capped at the most recent `limit` (default
-500, max 2000).
+The timeline is driven by `GET /api/frames?site=&start=&end=&cursor=&limit=` —
+rendered frames from the index, oldest-first, capped per request (default 500, max
+2000). With no `start`/`cursor` it returns the most recent window; pass `start`/`end`
+to load a historical window and follow `next_cursor` (an exclusive `scan_time`
+cursor) to page forward through spans larger than one request — the UI does this
+transparently while playing. `GET /api/frames/range?site=` reports the archive's
+min/max scan time and count so the picker can bound itself to what exists.
+(URL-encode timestamp params — `scan_time` contains `+`.)
 
 ## License
 TBD.

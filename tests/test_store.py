@@ -184,3 +184,66 @@ def test_rendered_frames_order_and_limit(tmp_path: Path) -> None:
 def test_rendered_frames_no_table(tmp_path: Path) -> None:
     conn = db.connect(tmp_path / "empty.db")  # never init_db'd
     assert db.rendered_frames(conn, site="KFTG", start=None, end=None, limit=10) == []
+
+
+def _seed_n_rendered(conn: sqlite3.Connection, n: int) -> list[datetime]:
+    times = [datetime(2026, 6, 20, 12, 5 * i, 0, tzinfo=UTC) for i in range(n)]
+    for scan in times:
+        db.record_volume(
+            conn, site="KFTG", scan_time=scan, s3_key=f"k/{scan.isoformat()}",
+            path=Path("v"), size_bytes=1, downloaded_at=scan,
+        )
+        db.record_render(
+            conn, site="KFTG", scan_time=scan, image_path=f"KFTG/{i_name(scan)}.png",
+            elevation_deg=0.5, width=1, height=1, bounds=(0.0, 0.0, 1.0, 1.0),
+            rendered_at=scan,
+        )
+    return times
+
+
+def i_name(scan: datetime) -> str:
+    return scan.strftime("%H%M")
+
+
+def test_frames_window_cursor_paging_no_gaps_or_dupes(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    times = _seed_n_rendered(conn, 5)
+
+    seen: list[str] = []
+    after: datetime | None = None
+    pages = 0
+    while True:
+        rows = db.frames_window(
+            conn, site="KFTG", start=None, end=None, after=after, limit=2
+        )
+        if not rows:
+            break
+        pages += 1
+        seen.extend(r["scan_time"] for r in rows)
+        after = datetime.fromisoformat(rows[-1]["scan_time"])
+    assert seen == [t.isoformat() for t in times]  # ordered, no gaps
+    assert len(seen) == len(set(seen)) == 5  # no dupes
+    assert pages == 3  # 2 + 2 + 1
+
+
+def test_frames_window_no_table(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "empty.db")
+    assert (
+        db.frames_window(conn, site="KFTG", start=None, end=None, after=None, limit=5)
+        == []
+    )
+
+
+def test_frames_extent(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    times = _seed_n_rendered(conn, 3)
+    mn, mx, count = db.frames_extent(conn, site="KFTG")
+    assert mn == times[0].isoformat()
+    assert mx == times[-1].isoformat()
+    assert count == 3
+    assert db.frames_extent(conn, site="KPUX") == (None, None, 0)
+
+
+def test_frames_extent_no_table(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "empty.db")
+    assert db.frames_extent(conn, site="KFTG") == (None, None, 0)

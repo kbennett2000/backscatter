@@ -53,6 +53,20 @@ scrubber / play control that cycles cached frames.
 - **Done when:** you can scrub and play back across the full collected archive in
   the browser. This is the feature subscription apps don't give us.
 
+## Slice 7 — Archive navigation
+Slice 6's timeline only reaches the most recent ~500 frames. Make the *whole*
+archive navigable: a UTC date/time range picker bounded to what exists, plus
+cursor pagination so a window deeper than the per-request cap is reachable without
+silently truncating history.
+- **API:** `/api/frames` gains a `cursor` (exclusive `scan_time` lower bound) and
+  returns `next_cursor` for forward paging; `/api/frames/range` reports a site's
+  min/max/count.
+- **Frontend:** range picker + presets driving the timeline; playback pages through
+  a long window transparently (fetch the next page near the end) so it never
+  dead-ends. Default load stays the recent rolling window.
+- **Done when:** you can pick any historical window the archive covers and scrub /
+  play across it, paging through spans larger than one request without gaps or dupes.
+
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher
 - MRMS national composite at low zoom (wide-area context — the *right* way to use

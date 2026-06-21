@@ -205,3 +205,54 @@ def rendered_frames(
         return []
     # Query takes the most-recent `limit` (DESC); present oldest-first for playback.
     return list(reversed(rows))
+
+
+def frames_window(
+    conn: sqlite3.Connection,
+    *,
+    site: str,
+    start: datetime | None,
+    end: datetime | None,
+    after: datetime | None,
+    limit: int,
+) -> list[sqlite3.Row]:
+    """One ascending page of rendered frames for forward cursor-pagination.
+
+    Filters to ``[start, end]`` and, when ``after`` is given, to ``scan_time >
+    after`` (exclusive cursor) — so paging is contiguous with no dupes or gaps.
+    Returns ``[]`` if there is no table yet."""
+    where = ["render_status = 'rendered'", "site = ?"]
+    params: list[object] = [site]
+    if start is not None:
+        where.append("scan_time >= ?")
+        params.append(start.isoformat())
+    if end is not None:
+        where.append("scan_time <= ?")
+        params.append(end.isoformat())
+    if after is not None:
+        where.append("scan_time > ?")
+        params.append(after.isoformat())
+    sql = (
+        f"SELECT * FROM volumes WHERE {' AND '.join(where)} "
+        "ORDER BY scan_time ASC LIMIT ?"
+    )
+    params.append(limit)
+    try:
+        return conn.execute(sql, params).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+
+def frames_extent(
+    conn: sqlite3.Connection, *, site: str
+) -> tuple[str | None, str | None, int]:
+    """(min scan_time, max scan_time, count) of rendered frames for a site."""
+    try:
+        row = conn.execute(
+            "SELECT MIN(scan_time) AS mn, MAX(scan_time) AS mx, COUNT(*) AS n "
+            "FROM volumes WHERE render_status = 'rendered' AND site = ?",
+            (site,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return (None, None, 0)
+    return (row["mn"], row["mx"], row["n"])
