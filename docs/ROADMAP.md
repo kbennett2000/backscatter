@@ -170,6 +170,31 @@ change, no new endpoint).
 - **Done when:** a real gap is visibly marked and normal cadence isn't (screenshot
   gate), and the detection rule passes its unit tests.
 
+## Slice 14 — Docker packaging
+Package the whole app as one self-hosted container so `docker compose up` is the entire
+install. Net-new infra — no app behavior change, no features.
+- **One container, both processes:** a lean bash entrypoint runs the FastAPI server and
+  the collect loop; if either exits the container exits (compose `restart` brings it
+  back — never half-up). `init: true` reaps/forwards signals; collect's existing
+  SIGTERM handling shuts down cleanly. Server starts first and seeds the DB before
+  collect starts (avoids the empty-DB seed race on a fresh volume).
+- **Base image (the build risk):** `python:3.12-slim-bookworm` (glibc) — Py-ART's stack
+  (numpy/scipy/netCDF4/cartopy/matplotlib) is manylinux-wheels-only, so **not Alpine**.
+  An ldd of the wheels needs only `libstdc++6`/`libgomp1`/`libz`/`ca-certificates` from
+  the system; everything heavy is bundled. Multi-stage with uv; no build tools in the
+  runtime image.
+- **Persistence:** raw volumes + renders + SQLite DB live on a host bind mount
+  (`./data` → `/data`), so `down`/`up`/rebuild never lose the archive. Container runs as
+  the host UID (`PUID`/`PGID`) so the mount is writable non-root.
+- **Config via env** (maps to existing Config, no code change): `BACKSCATTER_LOCATIONS`
+  seeds the store on first run, then the DB wins (Slice-10 flow); retention/poll/site
+  pass through `.env`.
+- **Deliverables:** `Dockerfile`, `docker-compose.yml`, `.env.example`, `.dockerignore`,
+  README "Run with Docker".
+- **Done when:** the image builds clean (pyart imports + reads a volume in-container),
+  `docker compose up` serves the UI on the LAN with collect cycling, and the archive +
+  seeded locations survive `down`/`up`/rebuild.
+
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher
 - MRMS national composite at low zoom (wide-area context — the *right* way to use

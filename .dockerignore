@@ -1,0 +1,16 @@
+# Never bake the archive or the local venv into the image — data lives on the host
+# volume, and the venv is rebuilt inside the container.
+data/
+.venv/
+.git/
+.github/
+.claude/
+tests/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+node_modules/
+*.log
+docs/

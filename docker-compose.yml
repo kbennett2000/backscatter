@@ -1,0 +1,33 @@
+# backscatter — one container, both processes (server + collect), archive on the host.
+#
+# Quick start:
+#   cp .env.example .env      # edit locations / retention / port as desired
+#   docker compose up -d      # build + run; UI at http://<host-ip>:${PORT}
+#   docker compose logs -f    # watch collect cycles
+# Your whole archive (raw volumes + renders + SQLite DB) lives in ./data — back it up
+# by copying that folder. `docker compose down && up` keeps it.
+
+services:
+  backscatter:
+    build: .
+    image: backscatter:latest
+    init: true # tini as PID 1: reap zombies, forward signals
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - ./data:/data # the archive + DB (host-mounted, survives rebuilds)
+    # Run as your host user so the ./data bind mount is writable without root.
+    # Defaults to 1000:1000; override in .env if `id -u`/`id -g` differ.
+    user: "${PUID:-1000}:${PGID:-1000}"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/config')
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s # the scientific-stack import is heavy; give startup room

@@ -17,3 +17,6 @@ tiles/
 *.db
 *.sqlite
 *.sqlite3
+
+# Docker — local env file (secrets/host-specific); .env.example is the tracked template
+.env

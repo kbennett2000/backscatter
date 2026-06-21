@@ -47,7 +47,41 @@ backscatter is an enthusiast tool. **Do not** use it for protection of life or
 property. For warnings and official guidance, rely on the National Weather Service
 and NOAA Weather Radio.
 
-## Quickstart
+## Run with Docker (recommended for self-hosting)
+One container runs both the server and the continuous collector; your whole archive
+lives on the host so rebuilds never lose data.
+
+```
+cp .env.example .env          # edit locations / retention / port
+docker compose up -d --build  # build the image and start both processes
+docker compose logs -f        # watch collect cycles
+```
+
+Open the map at `http://<host-ip>:8000` from any device on your LAN (set `PORT` in
+`.env` to change the published port; the container always serves on 8000 internally).
+
+- **Where data lives:** everything — raw volumes, rendered PNGs, and the SQLite DB —
+  is written to **`./data`** in this directory (bind-mounted to `/data` in the
+  container). Back it up by copying that folder; `docker compose down && up` keeps it.
+- **Configuration** is via `.env` (maps to the same env the app reads — no
+  Docker-specific config). On the **first** run with an empty `./data`,
+  `BACKSCATTER_LOCATIONS` seeds the location store; after that the DB is the source of
+  truth (manage locations in the UI), and the env seed is ignored. Retention
+  (`BACKSCATTER_RETENTION_DAYS`, `…_MAX_GB`) and poll interval pass through the same way.
+- **Permissions:** the container runs as your host user (`PUID`/`PGID`, default
+  `1000:1000`) so the `./data` bind mount is writable without root. If `id -u` / `id -g`
+  differ on your host, set `PUID`/`PGID` in `.env`. (This is for standard rootful
+  Docker. On **rootless** Docker, container-root already maps to your host user — there,
+  comment out the `user:` line in `docker-compose.yml` so it runs as container-root.)
+- **Lifecycle:** if either process dies the container exits and `restart: unless-stopped`
+  brings the whole thing back (it never runs half-up); a healthcheck pings the API. Stop
+  with `docker compose down` (the archive in `./data` persists).
+
+The image is glibc-based (Debian slim) because Py-ART's scientific stack ships only
+manylinux wheels; it's a chunky image (~the scientific stack) but builds with no system
+build tools.
+
+## Quickstart (without Docker)
 Early build — a few commands work end to end:
 
 ```
