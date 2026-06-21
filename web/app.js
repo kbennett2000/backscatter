@@ -1,7 +1,6 @@
 "use strict";
 
-// Keyless OpenFreeMap style (vector basemap with admin boundaries). No token.
-const BASEMAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
+// Basemap style URLs (keyless OpenFreeMap, light/dark) come from theme.js `basemapFor`.
 const RADAR_SOURCE = "radar-frame";
 const RADAR_LAYER = "radar-frame-layer";
 const LOC_SOURCE = "locations"; // GeoJSON source feeding the location pins
@@ -11,6 +10,7 @@ const PRELOAD_AHEAD = 3; // warm the next few PNGs so playback doesn't jank
 const PAGE_SIZE = 20; // frames per request when paging an explicit window
 const PAGE_FETCH_AHEAD = 3; // fetch the next page when this close to the end
 const LS_KEY = "backscatter.location"; // last-selected location, across reloads
+const LS_THEME = "backscatter.theme"; // last-chosen light/dark, across reloads
 
 const $ = (id) => document.getElementById(id);
 const readout = $("readout");
@@ -39,6 +39,7 @@ const extentLabel = $("extent");
 const locwrap = $("locwrap");
 const locationSelect = $("location");
 const manageBtn = $("manage");
+const themeBtn = $("theme");
 const locpanel = $("locpanel");
 const loclist = $("loclist");
 const locform = $("locform");
@@ -257,9 +258,10 @@ async function main() {
   state.site = active.site;
   populateSelector(active.name);
 
+  // The <head> shim already resolved + set data-theme; start the map on its basemap.
   state.map = new maplibregl.Map({
     container: "map",
-    style: BASEMAP_STYLE,
+    style: basemapFor(currentTheme()),
     center: [active.lon, active.lat],
     zoom: 7,
   });
@@ -311,9 +313,50 @@ async function switchLocation(name) {
 async function init() {
   ensureLocationLayers(); // pins for every configured location, above the radar
   refreshLocationMarkers();
+  updateThemeButton(currentTheme());
   await refreshExtent();
   wireControls();
   await loadDefault(); // recent rolling window (unchanged default UX)
+}
+
+// --- theme (light/dark) -----------------------------------------------------
+
+function currentTheme() {
+  return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+}
+
+function updateThemeButton(theme) {
+  // Show the glyph for the mode you'd switch TO.
+  themeBtn.textContent = theme === "dark" ? "☀" : "☾";
+}
+
+// Apply a theme: flip the attribute (CSS chrome reacts), persist it, and swap the
+// keyless basemap. The radar dBZ palette is untouched (it's in the PNGs).
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  try {
+    localStorage.setItem(LS_THEME, theme);
+  } catch (e) {
+    /* private mode / storage disabled — theme still applies for this session */
+  }
+  updateThemeButton(theme);
+  // setStyle() wipes every custom source/layer, so rebuild ours after the new basemap
+  // settles. Re-add on the next `idle` (fires once the style is applied and tile/sprite
+  // requests have settled — even if a basemap sprite 404s, unlike isStyleLoaded()).
+  state.map.once("idle", reapplyMapLayers);
+  // diff:false forces a clean reload (a liberty↔dark diff can leave our custom layers
+  // in a half-state), so reapplyMapLayers always rebuilds from scratch.
+  state.map.setStyle(basemapFor(theme), { diff: false });
+}
+
+function reapplyMapLayers() {
+  state.layerReady = false;
+  ensureLocationLayers();
+  refreshLocationMarkers();
+  if (state.frames.length) {
+    ensureLayer(state.frames[state.index]); // re-add the radar image for the current frame
+    setRadarVisible(true);
+  }
 }
 
 // A pin per configured location: a circle + a name label. The active location is
@@ -806,6 +849,7 @@ function wireControls() {
       renderLocList();
     }
   });
+  themeBtn.addEventListener("click", () => applyTheme(nextTheme(currentTheme())));
   locform.addEventListener("submit", submitForm);
   $("lf-reset").addEventListener("click", startAdd);
   $("lf-pick").addEventListener("click", () => {

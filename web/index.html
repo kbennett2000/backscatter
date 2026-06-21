@@ -9,6 +9,25 @@
       rel="stylesheet"
       href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
     />
+    <!-- Theme logic + no-FOUC guard: set data-theme BEFORE the stylesheet paints, so a
+         dark-mode user never flashes light. Same resolver app.js uses (theme.js). -->
+    <script src="/static/theme.js"></script>
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("backscatter.theme");
+          var prefersDark =
+            window.matchMedia &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches;
+          document.documentElement.dataset.theme = resolveInitialTheme(
+            stored,
+            prefersDark,
+          );
+        } catch (e) {
+          document.documentElement.dataset.theme = "light";
+        }
+      })();
+    </script>
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
@@ -33,6 +52,7 @@
         <select id="location" aria-label="Active location"></select>
       </span>
       <button id="manage" type="button">⚙ Locations</button>
+      <button id="theme" type="button" title="Toggle light/dark" aria-label="Toggle light/dark"></button>
       <span class="muted">window (UTC):</span>
       <input id="start" type="datetime-local" />
       <span class="muted">→</span>

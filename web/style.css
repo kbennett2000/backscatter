@@ -1,3 +1,49 @@
+/* Theme tokens (Slice 21). The chrome reads every color from these vars; :root is the
+   light theme, [data-theme="dark"] overrides for dark. The amber --accent is identical in
+   both — it pairs with the NWS radar palette, which is baked into the PNGs and never
+   themed. */
+:root {
+  --chrome-bg: rgba(255, 255, 255, 0.88);
+  --chrome-text: #1a2230;
+  --muted: #4a5663;
+  --card-bg: rgba(252, 253, 255, 0.97);
+  --card-text: #1a2230;
+  --border: rgba(0, 0, 0, 0.12);
+  --border-strong: rgba(0, 0, 0, 0.18);
+  --btn-bg: #2c3a4f;
+  --btn-text: #ffffff;
+  --ghost-bg: rgba(0, 0, 0, 0.08);
+  --ghost-text: #1a2230;
+  --accent: #ffb020;
+  --accent-text: #1a1200;
+  --link: #a85d00;
+  --error: #c0392b;
+  --progress-track: rgba(0, 0, 0, 0.12);
+  --shadow-card: rgba(0, 0, 0, 0.22);
+  --shadow-banner: rgba(0, 0, 0, 0.18);
+}
+
+[data-theme="dark"] {
+  --chrome-bg: rgba(0, 0, 0, 0.72);
+  --chrome-text: #ffffff;
+  --muted: #cdd6e0;
+  --card-bg: rgba(11, 16, 24, 0.92);
+  --card-text: #ffffff;
+  --border: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.25);
+  --btn-bg: #ffffff;
+  --btn-text: #000000;
+  --ghost-bg: rgba(255, 255, 255, 0.18);
+  --ghost-text: #ffffff;
+  --accent: #ffb020;
+  --accent-text: #1a1200;
+  --link: #ffc14d;
+  --error: #ff9a9a;
+  --progress-track: rgba(255, 255, 255, 0.14);
+  --shadow-card: rgba(0, 0, 0, 0.5);
+  --shadow-banner: rgba(0, 0, 0, 0.4);
+}
+
 html,
 body {
   margin: 0;
@@ -13,8 +59,8 @@ body {
 #credit {
   position: absolute;
   z-index: 1;
-  background: rgba(0, 0, 0, 0.7);
-  color: #fff;
+  background: var(--chrome-bg);
+  color: var(--chrome-text);
   font: 12px/1.4 system-ui, sans-serif;
   padding: 6px 10px;
   border-radius: 4px;
@@ -39,8 +85,8 @@ body {
   z-index: 1;
   top: 42px;
   left: 10px;
-  background: rgba(0, 0, 0, 0.6);
-  color: #cdd6e0;
+  background: var(--chrome-bg);
+  color: var(--muted);
   font: 11px/1.4 system-ui, sans-serif;
   padding: 4px 9px;
   border-radius: 4px;
@@ -59,14 +105,14 @@ body {
   top: 50%;
   transform: translate(-50%, -50%);
   width: min(440px, 88vw);
-  background: rgba(11, 16, 24, 0.92);
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--card-bg);
+  color: var(--card-text);
+  border: 1px solid var(--border);
   border-radius: 12px;
   padding: 22px 24px;
   text-align: center;
   font: 14px/1.6 system-ui, sans-serif;
-  box-shadow: 0 6px 30px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 6px 30px var(--shadow-card);
 }
 
 #statepanel[hidden] {
@@ -80,11 +126,11 @@ body {
 
 #statepanel p {
   margin: 0;
-  color: #cdd6e0;
+  color: var(--muted);
 }
 
 #statepanel a {
-  color: #ffc14d;
+  color: var(--link);
 }
 
 #statepanel #sp-action {
@@ -94,8 +140,8 @@ body {
   border: 0;
   border-radius: 6px;
   padding: 8px 16px;
-  background: #ffb020;
-  color: #1a1200;
+  background: var(--accent);
+  color: var(--accent-text);
 }
 
 #statepanel #sp-action[hidden] {
@@ -112,8 +158,8 @@ body {
   border: 0;
   border-radius: 6px;
   padding: 10px 16px;
-  background: #ffb020;
-  color: #1a1200;
+  background: var(--accent);
+  color: var(--accent-text);
 }
 
 #statepanel #sp-backfill[hidden] {
@@ -129,8 +175,8 @@ body {
 #statepanel #sp-backfill.secondary {
   margin-top: 8px;
   font-weight: 500;
-  background: rgba(255, 255, 255, 0.16);
-  color: #fff;
+  background: var(--ghost-bg);
+  color: var(--ghost-text);
 }
 
 #statepanel #sp-progress {
@@ -143,27 +189,27 @@ body {
 
 #statepanel #sp-progress-text {
   margin-bottom: 8px;
-  color: #cdd6e0;
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 
 #statepanel #sp-progress-bar {
   height: 8px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--progress-track);
   overflow: hidden;
 }
 
 #statepanel #sp-progress-fill {
   height: 100%;
   width: 0%;
-  background: #ffb020;
+  background: var(--accent);
   transition: width 0.3s ease;
 }
 
 #statepanel #sp-error {
   margin-top: 10px;
-  color: #ff9a9a;
+  color: var(--error);
 }
 
 #statepanel #sp-error[hidden] {
@@ -182,9 +228,9 @@ body {
   border: 0;
   border-radius: 999px;
   padding: 6px 14px;
-  background: #ffb020;
-  color: #1a1200;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  background: var(--accent);
+  color: var(--accent-text);
+  box-shadow: 0 2px 12px var(--shadow-banner);
 }
 
 #newbanner[hidden] {
@@ -202,8 +248,8 @@ body {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.72);
-  color: #fff;
+  background: var(--chrome-bg);
+  color: var(--chrome-text);
   padding: 8px 12px;
   border-radius: 8px;
   font: 12px/1.4 system-ui, sans-serif;
@@ -227,7 +273,7 @@ body {
   gap: 6px;
   padding-right: 6px;
   margin-right: 2px;
-  border-right: 1px solid rgba(255, 255, 255, 0.25);
+  border-right: 1px solid var(--border-strong);
 }
 
 #rangebar input {
@@ -240,8 +286,17 @@ body {
   border: 0;
   border-radius: 4px;
   padding: 3px 8px;
-  background: #fff;
-  color: #000;
+  background: var(--btn-bg);
+  color: var(--btn-text);
+}
+
+/* Theme toggle: a compact icon button in the control bar. */
+#rangebar #theme {
+  width: 28px;
+  padding: 3px 0;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1;
 }
 
 #locpanel {
@@ -251,11 +306,12 @@ body {
   left: 50%;
   transform: translateX(-50%);
   width: min(560px, 94vw);
-  background: rgba(0, 0, 0, 0.82);
-  color: #fff;
+  background: var(--card-bg);
+  color: var(--card-text);
   padding: 12px 14px;
   border-radius: 8px;
   font: 12px/1.5 system-ui, sans-serif;
+  box-shadow: 0 6px 30px var(--shadow-card);
 }
 
 #locpanel[hidden] {
@@ -272,7 +328,7 @@ body {
   align-items: center;
   gap: 8px;
   padding: 3px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  border-top: 1px solid var(--border);
 }
 
 #loclist .locrow .grow {
@@ -286,13 +342,13 @@ body {
   border: 0;
   border-radius: 4px;
   padding: 2px 7px;
-  background: #fff;
-  color: #000;
+  background: var(--btn-bg);
+  color: var(--btn-text);
 }
 
 #locpanel button.ghost {
-  background: rgba(255, 255, 255, 0.18);
-  color: #fff;
+  background: var(--ghost-bg);
+  color: var(--ghost-text);
 }
 
 #locform {
@@ -302,7 +358,7 @@ body {
   gap: 6px;
   margin-top: 10px;
   padding-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.25);
+  border-top: 1px solid var(--border-strong);
 }
 
 #locform #formtitle {
@@ -320,7 +376,7 @@ body {
 
 #locpanel .err {
   flex: 1 0 100%;
-  color: #ff9a9a;
+  color: var(--error);
   min-height: 1em;
 }
 
@@ -334,8 +390,8 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: rgba(0, 0, 0, 0.72);
-  color: #fff;
+  background: var(--chrome-bg);
+  color: var(--chrome-text);
   padding: 8px 12px;
   border-radius: 8px;
   font: 12px/1.4 system-ui, sans-serif;
@@ -378,7 +434,7 @@ body {
   bottom: 0;
   min-width: 4px;
   border-radius: 2px;
-  /* amber hatch = "missing data here" */
+  /* amber hatch = "missing data here"; sits on the timeline chrome, reads in both themes */
   background: repeating-linear-gradient(
     45deg,
     rgba(255, 176, 32, 0.95) 0,
@@ -390,7 +446,7 @@ body {
 
 #timeline #gapflag {
   flex: none;
-  color: #ffb020;
+  color: var(--accent);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -403,8 +459,8 @@ body {
   width: 34px;
   height: 28px;
   flex: none;
-  background: #fff;
-  color: #000;
+  background: var(--btn-bg);
+  color: var(--btn-text);
   border: 0;
   border-radius: 4px;
   font-size: 13px;
