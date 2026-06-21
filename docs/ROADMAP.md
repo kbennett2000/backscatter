@@ -293,6 +293,24 @@ Slice 18's empty state. (ADR-0010.)
   timeline auto-populates, on failure a plain "try again." Also offered as a secondary
   action on the wrong-window card. Pure `web/backfill.js`, unit-tested like `firstrun.js`.
 
+## Slice 20 — Bilinear interpolation in the radar render
+Smooth the nearest-neighbour blockiness so single-site reflectivity approaches the
+RadarScope look. Investigation first confirmed we already decode + paint full native
+super-res (720×1832 @ 250 m, 1:1 in range) — the blockiness was purely sampling: NN
+stamped each 0.5° ray (wider than a 250 m pixel past ~29 km) across many pixels → fan-
+wedges + per-ray speckle.
+- **Bilinear across the 4 nearest gates** (2 rays × 2 gates) in (azimuth, range), on dBZ
+  before the palette. Pure helpers `_bracket_rays`/`_bracket_gates`/`_bilinear_sample` in
+  [raster.py](../src/backscatter/render/raster.py), fully vectorized.
+- **Conservative masked-edge rule (the correctness crux):** a pixel is blended **only when
+  all 4 corners are valid**; otherwise it keeps the nearest sample (NaN where no-data). So
+  the valid/no-data boundary is **pixel-identical to NN** — interpolation never invents
+  data or moves a feature, it only smooths the interior of real returns. Verified: non-NaN
+  coverage on a real KFTG render is identical to NN (only interior values changed); visual
+  check vs the NN render confirmed cells/edges unmoved.
+- **Cost:** ~1.22× render time (4.83s → 5.90s on a real volume) — fine for collect/backfill.
+- Note: **existing cached PNGs stay NN until re-rendered**; new renders/backfills use bilinear.
+
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher
 - MRMS national composite at low zoom (wide-area context — the *right* way to use
