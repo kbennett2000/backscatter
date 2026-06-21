@@ -27,6 +27,12 @@ dev = [
     "moto[s3]",
     "httpx",
 ]
+# Documentation site + screenshot/GIF capture. Tooling only — never installed in the
+# Docker image (uv sync --no-dev) and not part of the app's runtime dependencies.
+docs = [
+    "mkdocs-material",
+    "playwright",
+]
 
 [build-system]
 requires = ["hatchling"]

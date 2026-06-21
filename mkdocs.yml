@@ -1,0 +1,69 @@
+site_name: backscatter
+site_description: Self-hosted NEXRAD weather radar with an unlimited playback archive — free, runs on your own computer, for any US location.
+site_url: https://kbennett2000.github.io/backscatter/
+repo_url: https://github.com/kbennett2000/backscatter
+repo_name: kbennett2000/backscatter
+copyright: Radar data is NOAA NEXRAD Level 2 (free, public). Not endorsed by or affiliated with NOAA or the National Weather Service.
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    scheme: slate
+    primary: black
+    accent: amber
+  font:
+    text: Inter
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - toc.integrate
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+  icon:
+    repo: fontawesome/brands/github
+
+extra_css:
+  - assets/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+# Keep the ADR files out of the top nav (linked from the Decisions page instead) so a
+# strict build doesn't warn about them.
+not_in_nav: |
+  /decisions/*.md
+
+nav:
+  - Home: index.md
+  - Get started:
+      - get-started/index.md
+      - Windows: get-started/windows.md
+      - macOS: get-started/macos.md
+      - Linux: get-started/linux.md
+  - Configure it: configure.md
+  - Using backscatter: using.md
+  - Help & FAQ: help.md
+  - For developers:
+      - dev/index.md
+      - Run it locally: dev/local.md
+      - How it fits together: dev/architecture.md
+      - Running the tests: dev/testing.md
+      - Contributing: dev/contributing.md
+      - Roadmap: ROADMAP.md
+      - Design decisions: dev/decisions.md

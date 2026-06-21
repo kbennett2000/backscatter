@@ -1,0 +1,23 @@
+/* backscatter docs — tie the Material theme to the app's look: dark slate + amber. */
+:root {
+  --md-accent-fg-color: #ffb020;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #0b1018;
+  --md-accent-fg-color: #ffb020;
+  --md-typeset-a-color: #ffc14d;
+}
+
+/* Hero images / GIFs: full width, soft rounded corners, a touch of separation. */
+.md-typeset img {
+  border-radius: 8px;
+}
+.md-typeset p > img[alt="backscatter"] {
+  box-shadow: 0 2px 18px rgba(0, 0, 0, 0.45);
+}
+
+/* Grid cards a little punchier on hover (the OS picker on the home page). */
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: #ffb020;
+}
