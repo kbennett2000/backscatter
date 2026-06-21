@@ -311,6 +311,22 @@ wedges + per-ray speckle.
 - **Cost:** ~1.22× render time (4.83s → 5.90s on a real volume) — fine for collect/backfill.
 - Note: **existing cached PNGs stay NN until re-rendered**; new renders/backfills use bilinear.
 
+## Slice 21 — Light/dark mode toggle
+A ☀/☾ button in the control bar switches the app between light and dark. UI theming only —
+the NWS dBZ radar palette is byte-identical in both (it's baked into the PNGs; the theme
+path only touches the basemap, CSS chrome, and pin paint).
+- **Basemap swap:** keyless OpenFreeMap `liberty` ↔ `dark` (no key/credit card, same
+  attribution). `setStyle` wipes custom layers, so the radar (current frame) + location pins
+  are re-added on the map's next `idle` (with `diff:false`) — robust where `style.load` /
+  `isStyleLoaded()` fail headless when a basemap sprite 404s.
+- **Chrome via CSS variables:** `:root` = light, `[data-theme="dark"]` = dark; `--accent`
+  amber identical in both. Pins (white + dark halo, amber active) read on both basemaps.
+- **Default + persistence:** follows the OS `prefers-color-scheme` on first load (default
+  light), then the explicit choice persists (`localStorage`); a `<head>` shim sets the theme
+  before first paint (no flash).
+- Pure `web/theme.js` (resolveInitialTheme/nextTheme/basemapFor), node --test'd like
+  firstrun.js. One dark-mode screenshot added to the docs.
+
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher
 - MRMS national composite at low zoom (wide-area context — the *right* way to use
