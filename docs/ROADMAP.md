@@ -382,11 +382,24 @@ frame queries are consistent; Latest works). This slice does the cheap fixes:
 
 ## Next big one — Near-real-time via the chunks bucket
 The only way to beat the ~5-min assembled-bucket floor (to ~1–2 min, RadarScope-class). ADR-
-0001 deferred it. Takes a chunks ingestor (`unidata-nexrad-level2-chunks`, rotating volume
-dirs) + partial-volume assembly (concatenate bzip2 chunks; the 0.5° cut is first, so render it
-before the full volume finishes; likely MetPy `Level2File` over a `BytesIO`) + incomplete-
-volume handling. Hybrid: keep the assembled bucket for the archive/backfill, add the chunks
-path only for the live frame. Real multi-step feature — its own slice (maybe two).
+0001 deferred it. Hybrid: keep the assembled bucket for the archive/backfill, add the chunks
+path only for the live frame. Split into 26a (assembler, done) + 26b (live wiring).
+
+- **Slice 26a — chunks reader + partial assembler (done, `63ab449`).** `ingest/chunks.py`
+  parses/orders the `unidata-nexrad-level2-chunks` rotating volume dirs and `assemble_lowest_
+  sweep()` fetches chunks in order, concatenating until the 0.5° cut is complete. The decode is
+  Py-ART, no MetPy: concatenated raw chunk bytes are a partial AR2V stream that `pyart.io.read_
+  nexrad_archive(BytesIO)` reads directly. Completeness rule `try_decode_lowest(min_sweeps=2)`
+  — the 0.5° surveillance cut is the FIRST sweep, so a 2nd cut appearing means it's frozen; we
+  never render a half-swept frame. Hermetic correctness gate (committed clear-air KEMX chunk
+  fixture): chunk-decoded 0.5° == assembled volume's tilt, **max abs diff 0.0 dBZ, masks
+  equal**. Debug `live-frame` CLI (`--compare-assembled`) for the visual check — live PNG is
+  byte-identical to the assembled render. NOT wired into collect/serve.
+- **Slice 26b — live wiring + reconciliation (next).** Wire the assembler into the collect loop
+  + serve the live frame: a `source` column (`live` | `assembled`) with migration, the live
+  frame as a normal `volumes` row upgraded in place to `assembled` when the complete volume
+  lands (PNG identical → invisible swap), active-dir caching across polls (vs 26a's O(dirs)
+  scan), and a `BACKSCATTER_LIVE_CHUNKS` config toggle. Serve unchanged.
 
 ## Later (not scheduled yet)
 - **Storm track lines / motion vectors** — parked as a real computer-vision effort (cell
