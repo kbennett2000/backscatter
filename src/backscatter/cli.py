@@ -144,6 +144,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip the confirmation prompt (for scripts).",
     )
 
+    live_help = (
+        "Debug: assemble + render the latest 0.5° frame from the real-time chunks "
+        "bucket (Slice 26a; not wired into collect/serve)."
+    )
+    live_parser = subparsers.add_parser(
+        "live-frame", help=live_help, description=live_help
+    )
+    live_parser.add_argument(
+        "target", nargs="?", default=None,
+        help="Location name or site code (e.g. KFTG). Defaults to the configured site.",
+    )
+    live_parser.add_argument(
+        "--volume-dir", type=int, default=None, metavar="N",
+        help="Target a specific rotating volume dir (skip the latest-dir scan).",
+    )
+    live_parser.add_argument(
+        "--out", default="live-out", help="Output dir for the rendered PNG(s).",
+    )
+    live_parser.add_argument(
+        "--compare-assembled", action="store_true", default=False,
+        help="Also render the assembled volume and print the max diff.",
+    )
+
     for name, help_text in _STUB_SUBCOMMANDS:
         subparsers.add_parser(name, help=help_text, description=help_text)
 
@@ -429,6 +452,82 @@ def _cmd_backfill(args: argparse.Namespace) -> int:
         conn.close()
 
 
+def _cmd_live_frame(args: argparse.Namespace) -> int:
+    import numpy as np
+
+    from backscatter.decode.volume import read_lowest_reflectivity
+    from backscatter.ingest import chunks, s3
+    from backscatter.render.render import render_sweep, render_volume
+
+    config = load_config()
+    client = s3.make_client()
+    conn = locations_store.connect_bootstrapped(config)
+    try:
+        site = resolve_target_site(conn, config, args.target)
+    finally:
+        conn.close()
+
+    vol_dir = (
+        f"{site}/{args.volume_dir}/"
+        if args.volume_dir is not None
+        else chunks.find_latest_volume_dir(client, site)
+    )
+    if not vol_dir:
+        print(f"No chunk volume dirs found for {site}.")
+        return 1
+    dir_chunks = chunks.list_dir_chunks(client, vol_dir)
+    if not dir_chunks:
+        print(f"No chunks in {vol_dir}.")
+        return 1
+    start = dir_chunks[0].start
+
+    assembled = chunks.assemble_lowest_sweep(client, vol_dir)
+    if assembled is None:
+        print(
+            f"0.5° cut not complete yet in {vol_dir} "
+            f"({len(dir_chunks)} chunk(s) so far) — try again shortly."
+        )
+        return 1
+    sweep, _buf = assembled
+
+    out = Path(args.out)
+    res = render_sweep(
+        sweep, config, site_icao=site, scan_time=start, out_dir=out / "live"
+    )
+    print(
+        f"LIVE {site} {start:%Y-%m-%d %H:%M:%S}Z  "
+        f"sweep={sweep.reflectivity.shape} elev={sweep.elevation_deg:.2f}°  "
+        f"{res.width}x{res.height}"
+    )
+    print(f"  png: {res.png_path}")
+
+    if args.compare_assembled:
+        akey = f"{start:%Y/%m/%d}/{site}/{site}{start:%Y%m%d_%H%M%S}_V06"
+        try:
+            adata = s3.download_volume(client, akey)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  assembled not in S3 yet ({akey}): {exc}")
+            return 0
+        tmp = out / f"{site}{start:%Y%m%d_%H%M%S}_V06"
+        tmp.write_bytes(adata)
+        asm = read_lowest_reflectivity(tmp)
+        ares = render_volume(tmp, config, out_dir=out / "assembled")
+        a, b = asm.reflectivity, sweep.reflectivity
+        if a.shape == b.shape:
+            d = float(np.ma.abs(a - b).max())
+            masks_eq = bool(
+                np.array_equal(np.ma.getmaskarray(a), np.ma.getmaskarray(b))
+            )
+            print(
+                f"  COMPARE vs assembled: shape {a.shape}  "
+                f"max|Δ|={d:.4f} dBZ  masks_equal={masks_eq}"
+            )
+        else:
+            print(f"  COMPARE shape mismatch: live {b.shape} vs assembled {a.shape}")
+        print(f"  assembled png: {ares.png_path}")
+    return 0
+
+
 def _dispatch(args: argparse.Namespace) -> int:
     if args.command == "pull":
         return _cmd_pull(args)
@@ -444,6 +543,8 @@ def _dispatch(args: argparse.Namespace) -> int:
         return _cmd_prune(args)
     if args.command == "backfill":
         return _cmd_backfill(args)
+    if args.command == "live-frame":
+        return _cmd_live_frame(args)
     print(f"backscatter {args.command}: not implemented yet")
     return 1
 
