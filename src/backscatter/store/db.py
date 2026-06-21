@@ -251,6 +251,32 @@ def frames_window(
         return []
 
 
+def frames_for_retention(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """All volume rows (every site, every render status), oldest scan first.
+
+    Retention is global across the whole archive (ADR-0009), so this is unfiltered
+    by site. ``scan_time`` is uniform ISO-8601 UTC, so the string sort is chrono.
+    Returns ``[]`` if there is no table yet."""
+    try:
+        return conn.execute(
+            "SELECT id, site, scan_time, path, image_path, size_bytes, "
+            "render_status FROM volumes ORDER BY scan_time ASC"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+
+def delete_frame(conn: sqlite3.Connection, *, site: str, scan_time: str) -> None:
+    """Delete one volume row by its ``(site, scan_time)`` key and commit.
+
+    ``scan_time`` is the stored ISO-8601 string (as read back from a row), not a
+    datetime — retention works off rows it already holds."""
+    conn.execute(
+        "DELETE FROM volumes WHERE site = ? AND scan_time = ?", (site, scan_time)
+    )
+    conn.commit()
+
+
 def frames_extent(
     conn: sqlite3.Connection, *, site: str
 ) -> tuple[str | None, str | None, int]:

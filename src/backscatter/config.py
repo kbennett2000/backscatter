@@ -30,6 +30,12 @@ DEFAULT_DB_NAME = "backscatter.db"
 # How often the collect loop polls S3. The radar cadence (4–10 min) is the real
 # ceiling; ~60s with timestamp dedupe captures every volume without hammering S3.
 DEFAULT_POLL_INTERVAL_S = 60.0
+# Retention (ADR-0009). Age limit defaults ON at 30 days; the size cap defaults
+# OFF (unlimited) — we never ship an arbitrary GB default that could surprise-delete
+# a user's archive. The collect loop runs a throttled prune at most this often.
+DEFAULT_RETENTION_DAYS = 30.0
+DEFAULT_PRUNE_INTERVAL_S = 3600.0
+_GIB = 1024**3
 
 
 @dataclass(frozen=True)
@@ -64,6 +70,18 @@ class Config:
     poll_interval_s: float
     site_override: str | None  # global SITE pin (applies to the default location)
     seed_locations: tuple[SeedLocation, ...]  # used only to bootstrap an empty store
+    # Retention policy (ADR-0009). ``None`` means that limit is off.
+    retention_max_age_days: float | None = DEFAULT_RETENTION_DAYS
+    retention_max_size_bytes: int | None = None
+    prune_interval_s: float = DEFAULT_PRUNE_INTERVAL_S
+
+    @property
+    def retention_active(self) -> bool:
+        """Whether any retention limit is in force (else prune is a no-op)."""
+        return (
+            self.retention_max_age_days is not None
+            or self.retention_max_size_bytes is not None
+        )
 
 
 def resolve_location(
@@ -122,7 +140,50 @@ def load_config(
         poll_interval_s=poll_interval_s,
         site_override=site or os.environ.get("BACKSCATTER_SITE"),
         seed_locations=seed,
+        retention_max_age_days=_retention_days(
+            os.environ.get("BACKSCATTER_RETENTION_DAYS")
+        ),
+        retention_max_size_bytes=_retention_size_bytes(
+            os.environ.get("BACKSCATTER_RETENTION_MAX_GB")
+        ),
+        prune_interval_s=_first_float(
+            None, os.environ.get("BACKSCATTER_PRUNE_INTERVAL"), DEFAULT_PRUNE_INTERVAL_S
+        ),
     )
+
+
+def _retention_days(env: str | None) -> float | None:
+    """Age limit in days: unset → default 30, ``0`` → off (None), <0 → error."""
+    if env is None or env == "":
+        return DEFAULT_RETENTION_DAYS
+    try:
+        days = float(env)
+    except ValueError as exc:
+        raise ValueError(
+            f"BACKSCATTER_RETENTION_DAYS must be a number, got {env!r}"
+        ) from exc
+    if days < 0:
+        raise ValueError(
+            "BACKSCATTER_RETENTION_DAYS must be >= 0 (0 disables the age limit)"
+        )
+    return None if days == 0 else days
+
+
+def _retention_size_bytes(env: str | None) -> int | None:
+    """Size cap: unset → unlimited (None), positive GB → bytes, <=0 → error."""
+    if env is None or env == "":
+        return None
+    try:
+        gb = float(env)
+    except ValueError as exc:
+        raise ValueError(
+            f"BACKSCATTER_RETENTION_MAX_GB must be a number, got {env!r}"
+        ) from exc
+    if gb <= 0:
+        raise ValueError(
+            "BACKSCATTER_RETENTION_MAX_GB must be > 0 (unset it for unlimited)"
+        )
+    return int(gb * _GIB)
 
 
 def _seed_locations(

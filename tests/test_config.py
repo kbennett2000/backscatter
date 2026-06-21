@@ -10,6 +10,8 @@ from backscatter.config import (
     DEFAULT_LAT,
     DEFAULT_LON,
     DEFAULT_POLL_INTERVAL_S,
+    DEFAULT_PRUNE_INTERVAL_S,
+    DEFAULT_RETENTION_DAYS,
     load_config,
     resolve_location,
 )
@@ -22,6 +24,9 @@ _ENV_VARS = (
     "BACKSCATTER_DATA_DIR",
     "BACKSCATTER_DB_PATH",
     "BACKSCATTER_POLL_INTERVAL",
+    "BACKSCATTER_RETENTION_DAYS",
+    "BACKSCATTER_RETENTION_MAX_GB",
+    "BACKSCATTER_PRUNE_INTERVAL",
 )
 
 
@@ -54,6 +59,46 @@ def test_default_seed_is_home_elizabeth() -> None:
 def test_poll_interval_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BACKSCATTER_POLL_INTERVAL", "30")
     assert load_config().poll_interval_s == 30.0
+
+
+# --- retention policy --------------------------------------------------------
+
+
+def test_retention_defaults() -> None:
+    config = load_config()
+    assert config.retention_max_age_days == DEFAULT_RETENTION_DAYS  # 30 days, ON
+    assert config.retention_max_size_bytes is None  # size cap OFF by default
+    assert config.prune_interval_s == DEFAULT_PRUNE_INTERVAL_S
+    assert config.retention_active is True  # age default keeps it active
+
+
+def test_retention_age_zero_disables(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BACKSCATTER_RETENTION_DAYS", "0")
+    config = load_config()
+    assert config.retention_max_age_days is None
+    assert config.retention_active is False  # nothing set → prune is a no-op
+
+
+def test_retention_age_negative_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BACKSCATTER_RETENTION_DAYS", "-5")
+    with pytest.raises(ValueError, match="RETENTION_DAYS"):
+        load_config()
+
+
+def test_retention_size_gb_to_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BACKSCATTER_RETENTION_MAX_GB", "2")
+    assert load_config().retention_max_size_bytes == 2 * 1024**3
+
+
+def test_retention_size_nonpositive_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BACKSCATTER_RETENTION_MAX_GB", "0")
+    with pytest.raises(ValueError, match="RETENTION_MAX_GB"):
+        load_config()
+
+
+def test_prune_interval_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BACKSCATTER_PRUNE_INTERVAL", "900")
+    assert load_config().prune_interval_s == 900.0
 
 
 def test_single_form_latlon_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
