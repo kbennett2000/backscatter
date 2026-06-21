@@ -33,6 +33,96 @@ body {
   max-width: 60ch;
 }
 
+/* Live "engine is alive" cue, just under the readout. */
+#status {
+  position: absolute;
+  z-index: 1;
+  top: 42px;
+  left: 10px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #cdd6e0;
+  font: 11px/1.4 system-ui, sans-serif;
+  padding: 4px 9px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+#status[hidden] {
+  display: none;
+}
+
+/* Friendly first-run / wrong-window card, centered over the (blank) map. */
+#statepanel {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(440px, 88vw);
+  background: rgba(11, 16, 24, 0.92);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 22px 24px;
+  text-align: center;
+  font: 14px/1.6 system-ui, sans-serif;
+  box-shadow: 0 6px 30px rgba(0, 0, 0, 0.5);
+}
+
+#statepanel[hidden] {
+  display: none;
+}
+
+#statepanel h2 {
+  margin: 0 0 10px;
+  font-size: 18px;
+}
+
+#statepanel p {
+  margin: 0;
+  color: #cdd6e0;
+}
+
+#statepanel a {
+  color: #ffc14d;
+}
+
+#statepanel #sp-action {
+  margin-top: 16px;
+  font: 600 14px system-ui, sans-serif;
+  cursor: pointer;
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 16px;
+  background: #ffb020;
+  color: #1a1200;
+}
+
+#statepanel #sp-action[hidden] {
+  display: none;
+}
+
+/* "New radar available" nudge, top-center under the rangebar. */
+#newbanner {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  top: 64px;
+  transform: translateX(-50%);
+  font: 600 12px system-ui, sans-serif;
+  cursor: pointer;
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 14px;
+  background: #ffb020;
+  color: #1a1200;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+
+#newbanner[hidden] {
+  display: none;
+}
+
 #rangebar {
   position: absolute;
   z-index: 2;

@@ -14,6 +14,13 @@
   <body>
     <div id="map"></div>
     <div id="readout">loading…</div>
+    <div id="status" hidden></div>
+    <button id="newbanner" type="button" hidden></button>
+    <div id="statepanel" hidden>
+      <h2 id="sp-title"></h2>
+      <p id="sp-body"></p>
+      <button id="sp-action" type="button" hidden></button>
+    </div>
     <div id="rangebar" hidden>
       <span id="locwrap" hidden>
         <span class="muted">location:</span>
@@ -67,6 +74,7 @@
     <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
     <script src="/static/gaps.js"></script>
     <script src="/static/markers.js"></script>
+    <script src="/static/firstrun.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>

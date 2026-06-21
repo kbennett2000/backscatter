@@ -14,6 +14,12 @@ const LS_KEY = "backscatter.location"; // last-selected location, across reloads
 
 const $ = (id) => document.getElementById(id);
 const readout = $("readout");
+const statusEl = $("status");
+const statepanel = $("statepanel");
+const spTitle = $("sp-title");
+const spBody = $("sp-body");
+const spAction = $("sp-action");
+const newbanner = $("newbanner");
 const rangebar = $("rangebar");
 const timeline = $("timeline");
 const playBtn = $("play");
@@ -54,6 +60,8 @@ const state = {
   picking: false, // map-click sets the form's lat/lon
   layerReady: false,
   extent: { min: null, max: null, count: 0 },
+  view: "has-data", // 'has-data' | 'wrong-window' | 'empty' (first-run state)
+  pollTimer: null, // setInterval handle for the new-frame poll
   window: null, // {start, end} ISO when an explicit window is loaded; null = recent
   nextCursor: null,
   fetching: false,
@@ -73,6 +81,24 @@ function cornersFromBounds(b) {
 
 function fmtTime(iso) {
   return iso.replace("T", " ").replace(/(\+00:00|Z)$/, "Z");
+}
+
+// Local-time formatters for the readout + status/messages (the time-picker stays UTC).
+function fmtLocalTime(iso) {
+  return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function fmtLocalDateTime(iso) {
+  return new Date(iso).toLocaleString([], {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
+  );
 }
 
 // "2026-06-20T23:06:51+00:00" -> "2026-06-20T23:06" for datetime-local inputs.
@@ -332,15 +358,103 @@ async function refreshExtent() {
   const r = await fetch(`/api/frames/range?location=${enc(state.location)}`).then(
     (x) => x.json(),
   );
+  applyExtent(r);
+}
+
+// Record the archive extent and refresh the picker bounds + the live status cue.
+function applyExtent(r) {
   state.extent = { min: r.min, max: r.max, count: r.count };
   if (r.min && r.max) {
     startInput.min = endInput.min = toLocalInput(r.min);
     startInput.max = endInput.max = toLocalInput(r.max);
     extentLabel.textContent = `archive: ${fmtTime(r.min)} – ${fmtTime(r.max)} (${r.count})`;
   }
+  updateStatus();
+}
+
+// The always-visible "is the engine alive" cue (plain language, local time).
+function updateStatus() {
+  statusEl.textContent = statusText(state.extent.max, Date.now(), fmtLocalTime);
+  statusEl.hidden = false;
+}
+
+// --- first-run state messaging ----------------------------------------------
+
+function showStatePanel(view) {
+  if (view === "empty") {
+    spTitle.textContent = "Collecting radar now";
+    spBody.innerHTML =
+      `backscatter is collecting radar for <strong>${escapeHtml(state.location)}</strong> ` +
+      "now. Your first frame should appear within about 5 minutes — this page updates on " +
+      "its own, so there's nothing to do.<br><br>Want to see past storms sooner? You can " +
+      '<a href="https://kbennett2000.github.io/backscatter/help/' +
+      '#i-dont-want-to-wait-can-i-load-past-radar" target="_blank" rel="noopener">' +
+      "load recent history</a>.";
+    spAction.hidden = true;
+  } else {
+    // wrong-window: the archive HAS data, just not for the picked range.
+    const from = state.extent.min ? fmtLocalDateTime(state.extent.min) : "—";
+    const to = state.extent.max ? fmtLocalDateTime(state.extent.max) : "—";
+    spTitle.textContent = "No radar in this time window";
+    spBody.innerHTML =
+      "There's no radar saved for the time range you picked. You have data from " +
+      `<strong>${escapeHtml(from)}</strong> to <strong>${escapeHtml(to)}</strong> ` +
+      "(your local time).";
+    spAction.textContent = "Jump to latest";
+    spAction.hidden = false;
+  }
+  statepanel.hidden = false;
+}
+
+function hideStatePanel() {
+  statepanel.hidden = true;
+}
+
+function showNewBanner() {
+  newbanner.textContent = "● New radar available — click to view";
+  newbanner.hidden = false;
+}
+
+function hideNewBanner() {
+  newbanner.hidden = true;
+}
+
+// --- auto-update poll (surface newly-landed frames without a reload) ---------
+
+const POLL_MS = 30000;
+
+function maybePoll() {
+  const want = shouldPoll(state.view, state.window !== null, document.hidden);
+  if (want && state.pollTimer === null) {
+    state.pollTimer = setInterval(pollTick, POLL_MS);
+  } else if (!want && state.pollTimer !== null) {
+    clearInterval(state.pollTimer);
+    state.pollTimer = null;
+  }
+}
+
+async function pollTick() {
+  let r;
+  try {
+    r = await fetch(`/api/frames/range?location=${enc(state.location)}`).then((x) =>
+      x.json(),
+    );
+  } catch {
+    return; // transient; try again next tick
+  }
+  const isNew = hasNewerFrame(state.extent.max, r.max);
+  const wasEmpty = state.view === "empty";
+  applyExtent(r);
+  if (!isNew) return;
+  if (wasEmpty) {
+    await loadDefault(); // first frame landed → show it automatically
+  } else if (state.view === "has-data" && state.window === null) {
+    showNewBanner(); // newer frame while on the live view → offer to jump (no yank)
+  }
 }
 
 async function loadDefault() {
+  hideNewBanner();
   // No start/cursor -> server returns the most recent frames.
   const data = await fetchFrames({});
   state.window = null;
@@ -349,6 +463,7 @@ async function loadDefault() {
 }
 
 async function loadWindow(startIso, endIso) {
+  hideNewBanner();
   state.window = { start: startIso, end: endIso };
   const data = await fetchFrames({
     start: startIso,
@@ -385,12 +500,18 @@ function applyFrames(data, { replace, jumpTo }) {
     state.gaps = [];
     renderGapTrack();
     gapflag.hidden = true;
-    readout.textContent = replace
-      ? `${state.location} · no frames in this range.`
-      : readout.textContent;
+    // Distinguish "new install, nothing yet" from "this window has no data" — they're
+    // different problems with different actions.
+    state.view = chooseView(state.extent.count, 0);
+    readout.textContent = `${state.location} · ${state.site}`;
+    showStatePanel(state.view);
+    updateStatus();
+    maybePoll();
     return;
   }
 
+  state.view = "has-data";
+  hideStatePanel();
   ensureLayer(state.frames[0]);
   setRadarVisible(true);
   timeline.hidden = false;
@@ -410,6 +531,7 @@ function applyFrames(data, { replace, jumpTo }) {
     // Appended a page: keep position, just reflect the new length.
     readoutFor(state.index);
   }
+  maybePoll(); // start/stop the new-frame poll for the view we just landed in
 }
 
 function setRadarVisible(visible) {
@@ -451,7 +573,7 @@ function goTo(i) {
     coordinates: cornersFromBounds(f.bounds), // per-frame (failover-safe)
   });
   scrubber.value = String(state.index);
-  frametime.textContent = fmtTime(f.scan_time);
+  frametime.textContent = fmtLocalTime(f.scan_time);
   readoutFor(state.index);
   updateGapFlag(state.index);
   preloadAround(state.index);
@@ -489,8 +611,9 @@ function updateGapFlag(i) {
 function readoutFor(i) {
   const f = state.frames[i];
   readout.textContent =
-    `${state.location} · ${f.site} · ${fmtTime(f.scan_time)} · ` +
+    `${state.location} · ${f.site} · ${fmtLocalDateTime(f.scan_time)} · ` +
     `${f.elevation_deg.toFixed(1)}° · ${i + 1}/${state.frames.length}`;
+  updateStatus();
 }
 
 function preloadAround(i) {
@@ -578,6 +701,23 @@ function wireControls() {
       loadWindow(start, end);
     });
   }
+  // Both the wrong-window "Jump to latest" and the "new radar available" nudge snap
+  // back to the live latest view.
+  spAction.addEventListener("click", () => {
+    pause();
+    loadDefault();
+  });
+  newbanner.addEventListener("click", () => {
+    pause();
+    loadDefault();
+  });
+  // Pause polling when the tab is backgrounded; catch up the moment it returns.
+  document.addEventListener("visibilitychange", () => {
+    maybePoll();
+    if (!document.hidden && shouldPoll(state.view, state.window !== null, false)) {
+      pollTick();
+    }
+  });
 }
 
 main();
