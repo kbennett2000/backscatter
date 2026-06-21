@@ -48,3 +48,12 @@ def parse_scan_time(key: str) -> datetime:
     return datetime.strptime(
         f"{match.group('date')}{match.group('time')}", "%Y%m%d%H%M%S"
     ).replace(tzinfo=UTC)
+
+
+def archive_key(site: str, scan_time: datetime) -> str:
+    """The assembled-bucket key for a site + scan time (inverse of the parsers).
+
+    NEXRAD archive naming is deterministic, so the live path (26b) can predict the
+    eventual assembled object's key from the scan time it already holds and check for
+    it directly. Round-trips with ``parse_site``/``parse_scan_time``."""
+    return f"{scan_time:%Y/%m/%d}/{site}/{site}{scan_time:%Y%m%d_%H%M%S}_V06"

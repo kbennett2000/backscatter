@@ -12,6 +12,7 @@ from typing import Any
 import boto3
 from botocore import UNSIGNED
 from botocore.client import Config as BotoConfig
+from botocore.exceptions import ClientError
 
 from backscatter.ingest.naming import is_volume_key
 
@@ -69,3 +70,18 @@ def download_volume(client: S3Client, key: str) -> bytes:
     response = client.get_object(Bucket=BUCKET, Key=key)
     body: bytes = response["Body"].read()
     return body
+
+
+def object_exists(client: S3Client, key: str) -> bool:
+    """Whether ``key`` exists in the assembled bucket (a cheap HEAD).
+
+    The reconcile sweep (26b) uses this to ask "has the assembled volume for this
+    live scan landed yet?" — a 404 means "not yet, retry next cycle", not an error.
+    """
+    try:
+        client.head_object(Bucket=BUCKET, Key=key)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
+            return False
+        raise
+    return True

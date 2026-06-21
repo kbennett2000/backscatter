@@ -380,10 +380,11 @@ frame queries are consistent; Latest works). This slice does the cheap fixes:
   floored), dropping the badge when scrubbed back — so a normal 5–9-min-old frame reads as the
   source lag, not a freeze. Deliberately does NOT claim the latency is solved.
 
-## Next big one — Near-real-time via the chunks bucket
-The only way to beat the ~5-min assembled-bucket floor (to ~1–2 min, RadarScope-class). ADR-
-0001 deferred it. Hybrid: keep the assembled bucket for the archive/backfill, add the chunks
-path only for the live frame. Split into 26a (assembler, done) + 26b (live wiring).
+## Near-real-time via the chunks bucket (DONE — 26a + 26b)
+Beat the ~5-min assembled-bucket floor (to ~1–2 min, RadarScope-class). ADR-0001 deferred it;
+ADR-0011 is the live-frame design. Hybrid: the assembled bucket stays the archive/backfill
+source of truth, the chunks path is additive for the live frame only. Measured win: a live
+frame 0.6 min old while the freshest assembled volume was 6.0 min old.
 
 - **Slice 26a — chunks reader + partial assembler (done, `63ab449`).** `ingest/chunks.py`
   parses/orders the `unidata-nexrad-level2-chunks` rotating volume dirs and `assemble_lowest_
@@ -395,11 +396,17 @@ path only for the live frame. Split into 26a (assembler, done) + 26b (live wirin
   fixture): chunk-decoded 0.5° == assembled volume's tilt, **max abs diff 0.0 dBZ, masks
   equal**. Debug `live-frame` CLI (`--compare-assembled`) for the visual check — live PNG is
   byte-identical to the assembled render. NOT wired into collect/serve.
-- **Slice 26b — live wiring + reconciliation (next).** Wire the assembler into the collect loop
-  + serve the live frame: a `source` column (`live` | `assembled`) with migration, the live
-  frame as a normal `volumes` row upgraded in place to `assembled` when the complete volume
-  lands (PNG identical → invisible swap), active-dir caching across polls (vs 26a's O(dirs)
-  scan), and a `BACKSCATTER_LIVE_CHUNKS` config toggle. Serve unchanged.
+- **Slice 26b — live wiring + reconciliation (done, ADR-0011).** The collect loop assembles the
+  live 0.5° frame each cycle and indexes it as a normal `volumes` row with a new `source` column
+  (`assembled` default | `live`, added by idempotent migration). A dedicated per-cycle reconcile
+  sweep upgrades each live row in place to `assembled` once the complete volume lands (6-min
+  delay; deterministic key check; artifact overwritten, **no re-render** — PNG identical, so the
+  swap is invisible), guaranteeing every scan_time ends as the complete assembled volume — no
+  partials, no duplicate rows. Bounded cost: a per-site cursor rides the active dir cheaply and
+  the O(dirs) active-dir scan is parallelized (~45s→~2s) and run only at cold start/rollover.
+  `BACKSCATTER_LIVE_CHUNKS` (default on) toggles it; off = exactly the assembled-only path. Serve
+  + frontend unchanged (the live frame surfaces through the existing UI; the freshness cue just
+  reads a much smaller age).
 
 ## Later (not scheduled yet)
 - **Storm track lines / motion vectors** — parked as a real computer-vision effort (cell

@@ -19,6 +19,7 @@ from backscatter.collect.collect import (
 )
 from backscatter.config import Config, Location, SeedLocation, resolve_location
 from backscatter.ingest import naming, s3
+from backscatter.ingest.chunks import CHUNKS_BUCKET
 from backscatter.render.render import RenderResult
 from backscatter.sites.select import rank_sites
 from backscatter.sites.table import site_by_icao
@@ -34,6 +35,10 @@ def s3_client() -> Iterator[object]:
     with mock_aws():
         client = boto3.client("s3", region_name=s3.REGION)
         client.create_bucket(Bucket=s3.BUCKET)
+        # The chunks bucket exists but is empty here, so the live path (on by default)
+        # finds no active volume and cleanly does nothing — these tests assert the
+        # assembled-only behavior. Live wiring is covered in test_live_chunks.py.
+        client.create_bucket(Bucket=CHUNKS_BUCKET)
         yield client
 
 

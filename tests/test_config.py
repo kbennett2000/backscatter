@@ -27,6 +27,7 @@ _ENV_VARS = (
     "BACKSCATTER_RETENTION_DAYS",
     "BACKSCATTER_RETENTION_MAX_GB",
     "BACKSCATTER_PRUNE_INTERVAL",
+    "BACKSCATTER_LIVE_CHUNKS",
 )
 
 
@@ -60,6 +61,18 @@ def test_poll_interval_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # Use a non-default value so this proves the override (not just the default).
     monkeypatch.setenv("BACKSCATTER_POLL_INTERVAL", "45")
     assert load_config().poll_interval_s == 45.0
+
+
+def test_live_chunks_defaults_on_and_toggles_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert load_config().live_chunks is True  # near-real-time on by default
+    for off in ("0", "false", "FALSE", "no"):
+        monkeypatch.setenv("BACKSCATTER_LIVE_CHUNKS", off)
+        assert load_config().live_chunks is False
+    for on in ("1", "true", "yes"):
+        monkeypatch.setenv("BACKSCATTER_LIVE_CHUNKS", on)
+        assert load_config().live_chunks is True
 
 
 # --- retention policy --------------------------------------------------------

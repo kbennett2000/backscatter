@@ -250,3 +250,83 @@ def test_two_writers_no_corruption_or_deadlock(tmp_path: Path) -> None:
     assert count == 300  # union of {0..199} and {100..299}
     assert distinct == 300  # every key exactly once — overlap deduped
     assert integrity == "ok"
+
+
+def test_live_assembled_backfill_writers_coexist(tmp_path: Path) -> None:
+    """The 26b live writer + reconcile upgrade + a backfill on overlapping keys.
+
+    Three threads, own connections: a live writer (source='live'), a reconcile worker
+    that upgrades live rows in place to assembled, and a backfill writer inserting
+    assembled rows — with overlapping (site, scan_time). We assert no deadlock/lock
+    error, every distinct scan lands exactly once (live then assembled is one row
+    upgraded, never two), and the index stays intact.
+    """
+    db_path = tmp_path / "data" / "backscatter.db"
+    boot = db.connect(db_path)
+    db.init_db(boot)
+    boot.close()
+
+    base = datetime(2026, 6, 21, 0, 0, tzinfo=UTC)
+    site = "KFTG"
+    live_scans = [base + timedelta(minutes=i) for i in range(0, 200)]
+    backfill_scans = [base + timedelta(minutes=i) for i in range(100, 300)]
+    errors: list[Exception] = []
+
+    def insert(scans: list[datetime], source: str) -> None:
+        conn = db.connect(db_path)
+        try:
+            for scan in scans:
+                try:
+                    if db.volume_exists(conn, site, scan):
+                        continue
+                    db.record_volume(
+                        conn, site=site, scan_time=scan, s3_key="k",
+                        path=Path("partial"), size_bytes=1, downloaded_at=scan,
+                        source=source,
+                    )
+                except db.sqlite3.IntegrityError:
+                    pass  # raced the same key — UNIQUE backstop
+        except Exception as exc:  # noqa: BLE001 — capture for the assertion
+            errors.append(exc)
+        finally:
+            conn.close()
+
+    def reconcile(scans: list[datetime]) -> None:
+        conn = db.connect(db_path)
+        try:
+            for scan in scans:
+                if db.volume_source(conn, site, scan) == "live":
+                    db.upgrade_to_assembled(
+                        conn, site=site, scan_time=scan, s3_key="full",
+                        path=Path("complete"), size_bytes=99,
+                    )
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+        finally:
+            conn.close()
+
+    threads = [
+        threading.Thread(target=insert, args=(live_scans, "live")),
+        threading.Thread(target=reconcile, args=(live_scans,)),
+        threading.Thread(target=insert, args=(backfill_scans, "assembled")),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert all(not t.is_alive() for t in threads)  # no deadlock
+    assert errors == []  # no 'database is locked', no unexpected error
+
+    conn = db.connect(db_path)
+    try:
+        count = conn.execute("SELECT COUNT(*) AS n FROM volumes").fetchone()["n"]
+        distinct = conn.execute(
+            "SELECT COUNT(DISTINCT scan_time) AS n FROM volumes"
+        ).fetchone()["n"]
+        integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
+    finally:
+        conn.close()
+
+    assert count == 300 == distinct  # one row per scan — overlap never duplicated
+    assert integrity == "ok"

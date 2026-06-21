@@ -154,6 +154,68 @@ def test_migration_adds_render_columns_to_old_db(tmp_path: Path) -> None:
     assert {"render_status", "image_path", "bounds_west", "elevation_deg"} <= cols
 
 
+def test_migration_adds_source_column_to_pre_26b_db(tmp_path: Path) -> None:
+    # A pre-Slice-26b DB: full render columns but no `source`, with one existing row.
+    path = tmp_path / "pre26b.db"
+    raw = sqlite3.connect(path)
+    raw.executescript(
+        "CREATE TABLE volumes (id INTEGER PRIMARY KEY, site TEXT NOT NULL, "
+        "scan_time TEXT NOT NULL, s3_key TEXT NOT NULL, path TEXT NOT NULL, "
+        "size_bytes INTEGER NOT NULL, downloaded_at TEXT NOT NULL, "
+        "render_status TEXT NOT NULL DEFAULT 'pending', image_path TEXT, "
+        "UNIQUE(site, scan_time));"
+    )
+    raw.execute(
+        "INSERT INTO volumes (site, scan_time, s3_key, path, size_bytes, "
+        "downloaded_at, render_status) VALUES "
+        "('KFTG', '2026-06-20T00:00:00+00:00', 'k', 'p', 1, 'd', 'rendered')"
+    )
+    raw.commit()
+    raw.close()
+
+    conn = db.connect(path)
+    db.init_db(conn)  # should ALTER in the `source` column
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(volumes)")}
+    assert "source" in cols
+    # The existing (assembled) row reads back as 'assembled' — no data lost/changed.
+    scan = datetime(2026, 6, 20, 0, 0, 0, tzinfo=UTC)
+    assert db.volume_source(conn, "KFTG", scan) == "assembled"
+    assert db.volume_exists(conn, "KFTG", scan)
+
+
+def test_source_helpers_record_query_and_upgrade(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    scan = datetime(2026, 6, 21, 21, 50, 0, tzinfo=UTC)
+    assert db.volume_source(conn, "KFTG", scan) is None  # absent
+
+    db.record_volume(
+        conn, site="KFTG", scan_time=scan, s3_key="KFTG/100/", path=Path("partial"),
+        size_bytes=700, downloaded_at=scan, source="live",
+    )
+    db.record_render(
+        conn, site="KFTG", scan_time=scan, image_path="KFTG/x.png",
+        elevation_deg=0.5, width=10, height=20, bounds=(0.0, 0.0, 1.0, 1.0),
+        rendered_at=scan,
+    )
+    assert db.volume_source(conn, "KFTG", scan) == "live"
+    assert [r["scan_time"] for r in db.live_rows_before(conn, before=scan)] == []
+    later = datetime(2026, 6, 21, 22, 0, 0, tzinfo=UTC)
+    assert [r["site"] for r in db.live_rows_before(conn, before=later)] == ["KFTG"]
+
+    db.upgrade_to_assembled(
+        conn, site="KFTG", scan_time=scan,
+        s3_key="2026/06/21/KFTG/KFTG20260621_215000_V06",
+        path=Path("complete"), size_bytes=5000,
+    )
+    row = db.latest_rendered_frame(conn, "KFTG")
+    assert row is not None
+    # Source/identity upgraded; render output left exactly as it was (no re-render).
+    assert row["source"] == "assembled"
+    assert row["path"] == "complete" and row["size_bytes"] == 5000
+    assert row["render_status"] == "rendered" and row["image_path"] == "KFTG/x.png"
+    assert db.live_rows_before(conn, before=later) == []  # no longer a live row
+
+
 def test_latest_rendered_frame_no_table(tmp_path: Path) -> None:
     conn = db.connect(tmp_path / "empty.db")  # never init_db'd
     assert db.latest_rendered_frame(conn) is None

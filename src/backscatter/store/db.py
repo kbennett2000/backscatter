@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS volumes (
     bounds_south  REAL,
     bounds_east   REAL,
     bounds_north  REAL,
+    source        TEXT    NOT NULL DEFAULT 'assembled',  -- assembled|live (26b)
     UNIQUE(site, scan_time)
 );
 """
@@ -48,6 +49,13 @@ _RENDER_COLUMNS: tuple[tuple[str, str], ...] = (
     ("bounds_south", "REAL"),
     ("bounds_east", "REAL"),
     ("bounds_north", "REAL"),
+)
+
+# The live-frame source flag (Slice 26b). Added by ALTER on pre-26b DBs; the
+# 'assembled' default makes every existing row read correctly (it was an assembled
+# volume), so the migration is safe and needs no data backfill.
+_SOURCE_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("source", "TEXT NOT NULL DEFAULT 'assembled'"),
 )
 
 
@@ -69,10 +77,12 @@ def connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def _ensure_render_columns(conn: sqlite3.Connection) -> None:
-    """Add any missing render columns to a pre-Slice-5 `volumes` table."""
+def _add_missing_columns(
+    conn: sqlite3.Connection, columns: tuple[tuple[str, str], ...]
+) -> None:
+    """Idempotently ALTER in any of ``columns`` not already on ``volumes``."""
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(volumes)")}
-    for name, decl in _RENDER_COLUMNS:
+    for name, decl in columns:
         if name not in existing:
             conn.execute(f"ALTER TABLE volumes ADD COLUMN {name} {decl}")
 
@@ -80,7 +90,8 @@ def _ensure_render_columns(conn: sqlite3.Connection) -> None:
 def init_db(conn: sqlite3.Connection) -> None:
     """Create the schema (and migrate old DBs) if needed. Idempotent."""
     conn.executescript(_SCHEMA)
-    _ensure_render_columns(conn)
+    _add_missing_columns(conn, _RENDER_COLUMNS)  # pre-Slice-5 DBs
+    _add_missing_columns(conn, _SOURCE_COLUMNS)  # pre-Slice-26b DBs
     conn.commit()
 
 
@@ -102,16 +113,19 @@ def record_volume(
     path: Path,
     size_bytes: int,
     downloaded_at: datetime,
+    source: str = "assembled",
 ) -> None:
     """Insert one volume row.
 
     The ``UNIQUE(site, scan_time)`` constraint is the dedupe backstop: a duplicate
     insert raises :class:`sqlite3.IntegrityError` even if a pre-check missed it.
+    ``source`` is ``'assembled'`` for archive volumes; the live-chunks path (26b)
+    passes ``'live'`` and the row is later upgraded by ``upgrade_to_assembled``.
     """
     conn.execute(
         "INSERT INTO volumes "
-        "(site, scan_time, s3_key, path, size_bytes, downloaded_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "(site, scan_time, s3_key, path, size_bytes, downloaded_at, source) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
         (
             site,
             scan_time.isoformat(),
@@ -119,9 +133,66 @@ def record_volume(
             str(path),
             size_bytes,
             downloaded_at.isoformat(),
+            source,
         ),
     )
     conn.commit()
+
+
+def volume_source(
+    conn: sqlite3.Connection, site: str, scan_time: datetime
+) -> str | None:
+    """Return a scan's ``source`` (``'assembled'``/``'live'``), or ``None`` if absent.
+
+    Used by the live path to skip a scan it already has and by the reconcile sweep
+    to find live rows; distinguishes "no row" from "have it".
+    """
+    row = conn.execute(
+        "SELECT source FROM volumes WHERE site = ? AND scan_time = ? LIMIT 1",
+        (site, scan_time.isoformat()),
+    ).fetchone()
+    return None if row is None else str(row["source"])
+
+
+def upgrade_to_assembled(
+    conn: sqlite3.Connection,
+    *,
+    site: str,
+    scan_time: datetime,
+    s3_key: str,
+    path: Path,
+    size_bytes: int,
+) -> None:
+    """Upgrade a live row to assembled in place (26b reconciliation).
+
+    Rewrites only the source + raw-artifact identity (``source``/``s3_key``/``path``/
+    ``size_bytes``); ``render_status`` and every render column are left untouched, so
+    the displayed PNG never changes (the assembled tilt is byte-identical to the live
+    one it replaces — proven in 26a). One ``UPDATE``, so no duplicate row is possible.
+    """
+    conn.execute(
+        "UPDATE volumes SET source = 'assembled', s3_key = ?, path = ?, "
+        "size_bytes = ? WHERE site = ? AND scan_time = ?",
+        (s3_key, str(path), size_bytes, site, scan_time.isoformat()),
+    )
+    conn.commit()
+
+
+def live_rows_before(
+    conn: sqlite3.Connection, *, before: datetime
+) -> list[sqlite3.Row]:
+    """``(id, site, scan_time)`` of every ``source='live'`` row older than ``before``.
+
+    The reconcile sweep's worklist: live frames old enough that their assembled
+    volume should have landed. Oldest-first; ``[]`` if there is no table yet."""
+    try:
+        return conn.execute(
+            "SELECT id, site, scan_time FROM volumes "
+            "WHERE source = 'live' AND scan_time < ? ORDER BY scan_time ASC",
+            (before.isoformat(),),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
 
 
 def record_render(

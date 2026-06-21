@@ -15,6 +15,16 @@ def test_parse_scan_time_from_basename() -> None:
     )
 
 
+def test_archive_key_round_trips_with_the_parsers() -> None:
+    # The live path (26b) predicts the assembled key from a scan time; it must be the
+    # exact inverse of the parsers so the reconcile sweep finds the real object.
+    scan = datetime(2026, 6, 21, 21, 53, 10, tzinfo=UTC)
+    key = naming.archive_key("KFTG", scan)
+    assert key == "2026/06/21/KFTG/KFTG20260621_215310_V06"
+    assert naming.parse_site(key) == "KFTG"
+    assert naming.parse_scan_time(key) == scan
+
+
 def test_parse_scan_time_from_full_key() -> None:
     key = "2026/06/20/KFTG/KFTG20260620_235959_V06"
     assert naming.parse_scan_time(key) == datetime(

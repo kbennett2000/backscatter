@@ -14,13 +14,20 @@ The live wiring into collect/serve + the archive reconciliation is Slice 26b.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from functools import partial
 
 from backscatter.decode.volume import Sweep, try_decode_lowest
 from backscatter.ingest.s3 import S3Client
 
 CHUNKS_BUCKET = "unidata-nexrad-level2-chunks"
+
+# Concurrency for the active-dir scan. It reads the first key of every rotating
+# volume dir (~500 for an active site); serial that is ~45s S3 round-trips, past a
+# poll interval, so we fan the LISTs out. A boto3 client is safe across threads.
+_DIR_SCAN_WORKERS = 32
 
 # A chunk basename: <YYYYMMDD>-<HHMMSS>-<chunknum>-<type>, e.g. 20260621-212734-001-S.
 _CHUNK_RE = re.compile(r"(?P<date>\d{8})-(?P<time>\d{6})-(?P<num>\d+)-(?P<type>[SIE])$")
@@ -76,27 +83,76 @@ def list_dir_chunks(client: S3Client, dir_prefix: str) -> list[Chunk]:
     return order_chunks(chunks)
 
 
-def find_latest_volume_dir(client: S3Client, site: str) -> str | None:
-    """The volume dir with the most recent start time (the active / most-recent volume).
+def _dir_start(client: S3Client, dir_prefix: str) -> tuple[datetime, str] | None:
+    """Read a dir's first chunk → ``(volume start, dir)``, or ``None`` if unreadable."""
+    contents = client.list_objects_v2(
+        Bucket=CHUNKS_BUCKET, Prefix=dir_prefix, MaxKeys=1
+    ).get("Contents", [])
+    if not contents:
+        return None
+    try:
+        return parse_chunk_key(contents[0]["Key"]).start, dir_prefix
+    except ValueError:
+        return None
 
-    Reads each dir's first key (chunk 1 = the volume start). This is O(number of dirs)
-    LIST calls — fine for the one-shot debug CLI; the live poller (26b) caches the
-    active dir across polls instead of re-scanning.
+
+def find_latest_volume_dir(client: S3Client, site: str) -> str | None:
+    """The volume dir with the most recent start time (the active / newest volume).
+
+    Reads each dir's first key (chunk 1 = the volume start) and takes the max start.
+    The per-dir reads run concurrently (``_DIR_SCAN_WORKERS``) so the O(dirs) scan is
+    a few seconds, not ~45s. The collect loop (26b) calls this only at cold start or
+    volume rollover (see :func:`advance_cursor`); a mid-scan volume is ridden cheaply.
     """
-    best: tuple[datetime, str] | None = None
-    for d in list_chunk_dirs(client, site):
-        contents = client.list_objects_v2(
-            Bucket=CHUNKS_BUCKET, Prefix=d, MaxKeys=1
-        ).get("Contents", [])
-        if not contents:
-            continue
-        try:
-            chunk = parse_chunk_key(contents[0]["Key"])
-        except ValueError:
-            continue
-        if best is None or chunk.start > best[0]:
-            best = (chunk.start, d)
-    return best[1] if best else None
+    dirs = list_chunk_dirs(client, site)
+    with ThreadPoolExecutor(max_workers=_DIR_SCAN_WORKERS) as pool:
+        starts = [r for r in pool.map(partial(_dir_start, client), dirs) if r]
+    if not starts:
+        return None
+    return max(starts, key=lambda s: s[0])[1]
+
+
+@dataclass(frozen=True)
+class LiveCursor:
+    """Per-site live-chunks state carried across collect polls.
+
+    Lets the loop ride the active volume dir cheaply (one LIST/poll) and run the
+    expensive ``find_latest_volume_dir`` scan only at cold start or rollover. ``done``
+    means the 0.5 deg cut for ``volume_dir`` is already assembled+indexed (or already
+    present) — we stop touching that volume until a newer dir appears.
+    """
+
+    volume_dir: str | None = None
+    chunk_count: int = 0
+    scan_time: datetime | None = None
+    done: bool = False
+
+
+def advance_cursor(client: S3Client, site: str, cursor: LiveCursor) -> LiveCursor:
+    """Refresh the cursor for one poll: ride the active dir, or find a newer one.
+
+    Riding an incomplete active dir is one cheap LIST to refresh the chunk count. On
+    cold start, or once the active volume is ``done``, run the (parallel) latest-dir
+    scan and start riding a newer dir if one appeared; otherwise return the cursor
+    unchanged (no newer volume yet — retried next poll).
+    """
+    if cursor.volume_dir is not None and not cursor.done:
+        found = list_dir_chunks(client, cursor.volume_dir)
+        return replace(
+            cursor,
+            chunk_count=len(found),
+            scan_time=found[0].start if found else cursor.scan_time,
+        )
+    latest = find_latest_volume_dir(client, site)
+    if latest is None or latest == cursor.volume_dir:
+        return cursor
+    found = list_dir_chunks(client, latest)
+    return LiveCursor(
+        volume_dir=latest,
+        chunk_count=len(found),
+        scan_time=found[0].start if found else None,
+        done=False,
+    )
 
 
 def assemble_lowest_sweep(

@@ -14,17 +14,19 @@ import logging
 import sqlite3
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 
 from backscatter.config import Config, Location
-from backscatter.ingest import s3
+from backscatter.decode.volume import Sweep
+from backscatter.ingest import chunks, naming, pull, s3
+from backscatter.ingest.chunks import LiveCursor
 from backscatter.ingest.pull import PullResult, PullStatus, fetch_volume
 from backscatter.ingest.s3 import S3Client
 from backscatter.prune.prune import run_prune
-from backscatter.render.render import RenderResult, render_volume
+from backscatter.render.render import RenderResult, render_sweep, render_volume
 from backscatter.sites.select import RankedSite, rank_sites
 from backscatter.sites.table import site_by_icao
 from backscatter.store import db
@@ -35,8 +37,18 @@ log = logging.getLogger("backscatter.collect")
 # How many ranked sites to try in one cycle before giving up (failover depth).
 FAILOVER_CANDIDATES = 3
 
-# The render step, injectable so tests can stub out Py-ART.
+# Live reconciliation (26b). A live row older than this should have its assembled
+# volume in S3 (26a measured a ~5-min median S3 lag after volume start; 6 min adds
+# margin), so the reconcile sweep tries to upgrade it. And a still-incomplete live
+# volume older than the give-up age is abandoned to the assembled path (we will never
+# get its 0.5 deg cut live), so the cursor never gets stuck on one bad volume.
+_LIVE_RECONCILE_DELAY = timedelta(minutes=6)
+_LIVE_GIVEUP_AGE = timedelta(minutes=8)
+
+# The render steps, injectable so tests can stub out Py-ART. ``RenderFn`` decodes a
+# stored volume file; ``RenderSweepFn`` renders an already-decoded live Sweep.
 RenderFn = Callable[..., RenderResult]
+RenderSweepFn = Callable[..., RenderResult]
 
 
 class CycleStatus(StrEnum):
@@ -89,6 +101,8 @@ def collect_cycle(
     now: datetime,
     client: S3Client,
     render_fn: RenderFn = render_volume,
+    live_cursors: dict[str, LiveCursor] | None = None,
+    render_sweep_fn: RenderSweepFn = render_sweep,
 ) -> list[CycleResult]:
     """Run one pull→render→index pass over **every** given location.
 
@@ -96,14 +110,18 @@ def collect_cycle(
     Locations are processed sequentially, so two locations sharing a nearest radar
     converge on one frame: the first stores it, the second sees ``ALREADY_HAVE`` —
     no double pull/store/render. One location's unexpected error is caught so the
-    others (and the loop) carry on.
+    others (and the loop) carry on. ``live_cursors`` carries the per-site live-chunks
+    state across cycles (the loop owns one dict); ``None`` means a fresh one (tests).
     """
+    cursors = live_cursors if live_cursors is not None else {}
     results: list[CycleResult] = []
     for location in locations:
         try:
             results.append(
                 _collect_location(
-                    location, config, conn, now=now, client=client, render_fn=render_fn
+                    location, config, conn, now=now, client=client,
+                    render_fn=render_fn, live_cursors=cursors,
+                    render_sweep_fn=render_sweep_fn,
                 )
             )
         except Exception:
@@ -120,10 +138,46 @@ def _collect_location(
     now: datetime,
     client: S3Client,
     render_fn: RenderFn,
+    live_cursors: dict[str, LiveCursor],
+    render_sweep_fn: RenderSweepFn,
 ) -> CycleResult:
-    """Collect one location, with failover across its own ranked neighbors."""
+    """Collect one location: the assembled archive frame, plus the live chunks frame.
+
+    The assembled path (failover across ranked neighbors) is the source of truth and
+    decides the returned ``CycleResult``. The live-chunks attempt + reconcile sweep are
+    strictly additive (gated by ``config.live_chunks``) — they write/upgrade their own
+    rows and never change the assembled outcome, and any live error is isolated so it
+    can't mask an assembled success.
+    """
     name = location.name
-    for rank, ranked in enumerate(_candidate_sites(location)):
+    candidates = _candidate_sites(location)
+    cyc = _collect_assembled(name, candidates, config, conn, now, client, render_fn)
+
+    primary = candidates[0].site.icao if candidates else None
+    if config.live_chunks and primary is not None:
+        try:
+            cursor = live_cursors.get(primary, LiveCursor())
+            live_cursors[primary] = _try_live_frame(
+                config, conn, primary, cursor,
+                now=now, client=client, render_sweep_fn=render_sweep_fn,
+            )
+            _reconcile_live_frames(config, conn, primary, now=now, client=client)
+        except Exception:
+            log.exception("[live] %s live/reconcile errored; continuing", primary)
+    return cyc
+
+
+def _collect_assembled(
+    name: str,
+    candidates: list[RankedSite],
+    config: Config,
+    conn: sqlite3.Connection,
+    now: datetime,
+    client: S3Client,
+    render_fn: RenderFn,
+) -> CycleResult:
+    """The assembled-archive collect, with failover across ranked neighbors."""
+    for rank, ranked in enumerate(candidates):
         site = ranked.site.icao
         result = fetch_volume(config, site, conn, now=now, client=client)
 
@@ -144,6 +198,137 @@ def _collect_location(
 
     log.warning("[%s] no candidate site produced a volume this cycle", name)
     return CycleResult(CycleStatus.NOTHING, location=name)
+
+
+def _try_live_frame(
+    config: Config,
+    conn: sqlite3.Connection,
+    site: str,
+    cursor: LiveCursor,
+    *,
+    now: datetime,
+    client: S3Client,
+    render_sweep_fn: RenderSweepFn,
+) -> LiveCursor:
+    """Assemble + index the live 0.5 deg frame for ``site``; return the new cursor.
+
+    Bounded cost: ``advance_cursor`` rides the active dir with one LIST; we only
+    decode when chunks actually advanced AND the scan isn't already indexed. A
+    completed/indexed volume is marked ``done`` and never re-decoded.
+    """
+    cur = chunks.advance_cursor(client, site, cursor)
+    if cur.volume_dir is None or cur.done or cur.scan_time is None:
+        return cur
+    grew = cur.volume_dir != cursor.volume_dir or cur.chunk_count > cursor.chunk_count
+    if not grew:
+        return cur  # no new chunks since last poll — skip the decode
+    if db.volume_source(conn, site, cur.scan_time) is not None:
+        return _done(cur)  # already have this scan (live or assembled)
+
+    assembled = chunks.assemble_lowest_sweep(client, cur.volume_dir)
+    if assembled is None:
+        # 0.5 deg cut not complete yet. Abandon only if implausibly old — the
+        # assembled path will collect it — so the cursor never sticks on one volume.
+        if cur.scan_time < now - _LIVE_GIVEUP_AGE:
+            return _done(cur)
+        return cur
+    sweep, raw = assembled
+    # The decoded scan_time is authoritative (== the assembled _V06 name).
+    scan_time = sweep.scan_time
+    if db.volume_source(conn, site, scan_time) is not None:
+        return _done(cur)
+
+    dest = pull.destination_for(config, site, scan_time)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(raw)
+    try:
+        db.record_volume(
+            conn, site=site, scan_time=scan_time, s3_key=cur.volume_dir,
+            path=dest, size_bytes=len(raw), downloaded_at=now, source="live",
+        )
+    except sqlite3.IntegrityError:
+        return _done(cur)  # raced the assembled writer; it owns the row now
+    _render_live_and_record(
+        config, conn, sweep, site=site, scan_time=scan_time,
+        now=now, render_sweep_fn=render_sweep_fn,
+    )
+    return _done(cur)
+
+
+def _render_live_and_record(
+    config: Config,
+    conn: sqlite3.Connection,
+    sweep: Sweep,
+    *,
+    site: str,
+    scan_time: datetime,
+    now: datetime,
+    render_sweep_fn: RenderSweepFn,
+) -> bool:
+    """Render an already-decoded live sweep + record it; mirror of render_and_index."""
+    try:
+        render = render_sweep_fn(sweep, config, site_icao=site, scan_time=scan_time)
+        image_path = render.png_path.relative_to(config.data_dir / "renders").as_posix()
+        db.record_render(
+            conn, site=site, scan_time=scan_time, image_path=image_path,
+            elevation_deg=render.elevation_deg, width=render.width,
+            height=render.height, bounds=render.bounds_wgs84, rendered_at=now,
+        )
+        log.info("[live] %s %s -> %s (source=live)", site, _ts(scan_time), image_path)
+        return True
+    except Exception:
+        log.exception(
+            "[live] render failed for %s %s; partial kept", site, _ts(scan_time)
+        )
+        db.mark_render_failed(conn, site, scan_time)
+        return False
+
+
+def _reconcile_live_frames(
+    config: Config,
+    conn: sqlite3.Connection,
+    site: str,
+    *,
+    now: datetime,
+    client: S3Client,
+) -> None:
+    """Upgrade live rows to the complete assembled volume once it has landed.
+
+    For each ``source='live'`` row old enough that its assembled volume should exist
+    (``_LIVE_RECONCILE_DELAY``): if the deterministic assembled key is present, replace
+    the partial artifact with the complete volume and flip the row to ``assembled`` (no
+    re-render — the PNG is identical). A missing object or any fetch error just leaves
+    the row untouched to retry next cycle: the upgrade is the only mutation and it runs
+    only after a successful download, so a failure never corrupts the row.
+    """
+    for row in db.live_rows_before(conn, before=now - _LIVE_RECONCILE_DELAY):
+        if row["site"] != site:
+            continue
+        scan_time = datetime.fromisoformat(row["scan_time"])
+        key = naming.archive_key(site, scan_time)
+        try:
+            if not s3.object_exists(client, key):
+                continue  # assembled volume not landed yet — retry next cycle
+            data = s3.download_volume(client, key)
+        except Exception:
+            log.exception(
+                "[live] reconcile fetch failed for %s %s; will retry",
+                site, _ts(scan_time),
+            )
+            continue
+        dest = pull.destination_for(config, site, scan_time)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)  # overwrite the partial with the complete volume
+        db.upgrade_to_assembled(
+            conn, site=site, scan_time=scan_time,
+            s3_key=key, path=dest, size_bytes=len(data),
+        )
+        log.info("[live] reconciled %s %s -> source=assembled", site, _ts(scan_time))
+
+
+def _done(cursor: LiveCursor) -> LiveCursor:
+    """The cursor with ``done=True`` — its active volume needs no more live work."""
+    return replace(cursor, done=True)
 
 
 def render_and_index(
@@ -223,6 +408,7 @@ def run_collect(
     now_fn: Callable[[], datetime] | None = None,
     client: S3Client | None = None,
     render_fn: RenderFn = render_volume,
+    render_sweep_fn: RenderSweepFn = render_sweep,
     max_cycles: int | None = None,
 ) -> None:
     """Run the collection loop until ``stop_event`` is set or ``max_cycles`` reached."""
@@ -231,6 +417,9 @@ def run_collect(
     client = s3.make_client(client)
 
     conn = locations_store.connect_bootstrapped(config)
+    # Per-site live-chunks state, owned by the loop so the active-dir scan is amortized
+    # across polls (cold-start scan once, then ride the active dir cheaply).
+    live_cursors: dict[str, LiveCursor] = {}
     try:
         cycles = 0
         last_prune_at: datetime | None = None
@@ -246,6 +435,7 @@ def run_collect(
                 collect_cycle(
                     locations, config, conn,
                     now=now, client=client, render_fn=render_fn,
+                    live_cursors=live_cursors, render_sweep_fn=render_sweep_fn,
                 )
             except Exception:
                 # One bad cycle (network/S3/decode) must not end collection.

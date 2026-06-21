@@ -63,6 +63,16 @@ def _destination(config: Config, site: str, key: str, scan_time: datetime) -> Pa
     return config.data_dir / site / f"{scan_time:%Y%m%d}" / basename
 
 
+def destination_for(config: Config, site: str, scan_time: datetime) -> Path:
+    """Canonical local path for a site+scan volume, from the scan time alone.
+
+    NEXRAD basenames are deterministic, so the live partial and the eventual assembled
+    volume for one scan map to the *same* path — the reconcile upgrade (26b) overwrites
+    the partial in place, no orphan. Equals ``_destination`` for the real key."""
+    basename = f"{site}{scan_time:%Y%m%d_%H%M%S}_V06"
+    return config.data_dir / site / f"{scan_time:%Y%m%d}" / basename
+
+
 def fetch_key(
     config: Config,
     site: str,

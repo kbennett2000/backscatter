@@ -36,6 +36,9 @@ DEFAULT_POLL_INTERVAL_S = 30.0
 # a user's archive. The collect loop runs a throttled prune at most this often.
 DEFAULT_RETENTION_DAYS = 30.0
 DEFAULT_PRUNE_INTERVAL_S = 3600.0
+# Near-real-time live frame from the chunks bucket (Slice 26b). ON by default; set
+# BACKSCATTER_LIVE_CHUNKS=0/false/no to fall back to the assembled-only path exactly.
+DEFAULT_LIVE_CHUNKS = True
 _GIB = 1024**3
 
 
@@ -75,6 +78,7 @@ class Config:
     retention_max_age_days: float | None = DEFAULT_RETENTION_DAYS
     retention_max_size_bytes: int | None = None
     prune_interval_s: float = DEFAULT_PRUNE_INTERVAL_S
+    live_chunks: bool = DEFAULT_LIVE_CHUNKS  # near-real-time live frame (26b)
 
     @property
     def retention_active(self) -> bool:
@@ -150,7 +154,15 @@ def load_config(
         prune_interval_s=_first_float(
             None, os.environ.get("BACKSCATTER_PRUNE_INTERVAL"), DEFAULT_PRUNE_INTERVAL_S
         ),
+        live_chunks=_live_chunks(os.environ.get("BACKSCATTER_LIVE_CHUNKS")),
     )
+
+
+def _live_chunks(env: str | None) -> bool:
+    """Live-chunks toggle: unset → on; ``0``/``false``/``no`` (any case) → off."""
+    if env is None or env == "":
+        return DEFAULT_LIVE_CHUNKS
+    return env.strip().lower() not in ("0", "false", "no")
 
 
 def _retention_days(env: str | None) -> float | None:
