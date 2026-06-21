@@ -131,6 +131,28 @@ makes the archive grow unbounded. Bound it with configurable retention (ADR-0009
   exact bytes), a pruned frame is gone from `/api/frames` with its files removed, and
   `--dry-run` reports the same set without deleting anything.
 
+## Slice 12 — First-class backfill command
+Replace the throwaway demo script with a real command that fills the archive with
+historical data on demand — the same per-volume pipeline as collect, over a past
+range instead of "latest".
+- **Command:** `backfill [target] --start <UTC> --end <UTC> [--dry-run] [--yes]`.
+  `target` is a location name or site code (defaults to the configured site). Lists
+  assembled volumes for the site across the range, then per volume:
+  dedupe → download → render → index, reusing the existing pipeline
+  (`pull.fetch_key` + `collect.render_and_index`). No failover (one site).
+- **Dedupe / idempotent:** skips `(site, scan_time)` already indexed; re-running a
+  range adds nothing. Composes with the archive — fills holes, leaves frames alone.
+- **Dry-run:** reports volume count / span / exact listed bytes and fetches nothing.
+  The live run prints the same plan, then prompts `[y/N]` on a TTY unless `--yes`.
+- **Retention interaction (ADR-0009):** if the range falls (partly) older than the
+  active age window, it WARNS that those frames will be pruned on the next prune pass
+  (raise/disable `BACKSCATTER_RETENTION_DAYS` to keep them) — does not refuse.
+- **Resilience:** a bad/un-decodable volume is marked render-failed (kept); a fetch
+  error is skipped — a long backfill never aborts on one volume. End-of-run summary.
+- **Done when:** a dry-run reports the range without fetching, a real backfill of a
+  past range lands frames that scrub in the timeline, a re-run adds nothing, and the
+  retention warning fires on a range older than the configured window.
+
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher
 - MRMS national composite at low zoom (wide-area context — the *right* way to use

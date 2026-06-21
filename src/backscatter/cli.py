@@ -2,13 +2,16 @@
 
 The full command surface from the roadmap is wired up; commands light up slice by
 slice (see docs/ROADMAP.md). ``pull`` (Slice 1), ``site`` (Slice 2), ``render``
-(Slice 3), ``serve`` (Slice 4), and ``collect`` (Slice 5) are all implemented.
+(Slice 3), ``serve`` (Slice 4), ``collect`` (Slice 5), ``prune`` (Slice 11), and
+``backfill`` (Slice 12) are all implemented.
 """
 
 from __future__ import annotations
 
 import argparse
+import sqlite3
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -104,6 +107,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show what would be deleted without deleting anything.",
     )
     prune_parser.add_argument(
+        "--yes",
+        action="store_true",
+        default=False,
+        help="Skip the confirmation prompt (for scripts).",
+    )
+
+    backfill_help = "Fetch + render + index historical volumes over a past date range."
+    backfill_parser = subparsers.add_parser(
+        "backfill", help=backfill_help, description=backfill_help
+    )
+    backfill_parser.add_argument(
+        "target",
+        nargs="?",
+        default=None,
+        help="Location name or site code (e.g. KFTG). Defaults to the configured site.",
+    )
+    backfill_parser.add_argument(
+        "--start", required=True, metavar="<UTC>",
+        help="Range start, UTC ISO-8601 (e.g. 2026-06-01T00:00:00Z).",
+    )
+    backfill_parser.add_argument(
+        "--end", required=True, metavar="<UTC>",
+        help="Range end, UTC ISO-8601 (inclusive).",
+    )
+    backfill_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Show what would be fetched without downloading anything.",
+    )
+    backfill_parser.add_argument(
         "--yes",
         action="store_true",
         default=False,
@@ -283,7 +317,6 @@ def _print_prune_report(report: PruneReport, *, planned: bool) -> None:
 
 def _cmd_prune(args: argparse.Namespace) -> int:
     import sys
-    from datetime import UTC, datetime
 
     from backscatter.prune.prune import human_bytes, run_prune
 
@@ -322,6 +355,102 @@ def _cmd_prune(args: argparse.Namespace) -> int:
         conn.close()
 
 
+def _parse_utc(text: str, *, field: str) -> datetime:
+    """Parse a UTC ISO-8601 timestamp (a trailing ``Z`` is accepted)."""
+    raw = text.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"--{field} must be UTC ISO-8601 (e.g. 2026-06-01T00:00:00Z), got {text!r}"
+        ) from exc
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
+
+
+def _resolve_backfill_site(
+    conn: sqlite3.Connection, config: Config, target: str | None
+) -> str:
+    """Resolve a target (location name or ICAO) to a site code.
+
+    Location names win over site codes (a named place is what the user usually
+    means); an unmatched token is treated as an ICAO and validated against the table.
+    """
+    from backscatter.sites.table import site_by_icao
+
+    if target is None:
+        return locations_store.default_location(conn, config.site_override).site
+    lowered = target.lower()
+    for loc in locations_store.current_locations(conn, config.site_override):
+        if loc.name.lower() == lowered:
+            return loc.site
+    icao = target.upper()
+    if site_by_icao(icao) is not None:
+        return icao
+    raise ValueError(f"unknown location or site: {target!r}")
+
+
+def _cmd_backfill(args: argparse.Namespace) -> int:
+    import sys
+
+    from backscatter.backfill.backfill import plan_backfill, run_backfill
+    from backscatter.ingest import s3
+    from backscatter.prune.prune import human_bytes
+
+    config = load_config()
+    start = _parse_utc(args.start, field="start")
+    end = _parse_utc(args.end, field="end")
+    if start >= end:
+        raise ValueError("--start must be before --end")
+
+    now = datetime.now(UTC)
+    client = s3.make_client()
+    conn = locations_store.connect_bootstrapped(config)
+    try:
+        site = _resolve_backfill_site(conn, config, args.target)
+        plan = plan_backfill(config, conn, site, start, end, now=now, client=client)
+        print(
+            f"Backfill {site}  {start:%Y-%m-%d %H:%M}Z … {end:%Y-%m-%d %H:%M}Z: "
+            f"{plan.total} volume(s) in range, {plan.already_have} already indexed, "
+            f"{plan.to_fetch} to fetch (~{human_bytes(plan.bytes_estimate)})."
+        )
+        if plan.older_than_retention and plan.retention_cutoff is not None:
+            print(
+                f"  WARNING: {plan.older_than_retention} volume(s) predate your "
+                f"{config.retention_max_age_days:g}-day retention window (older than "
+                f"{plan.retention_cutoff:%Y-%m-%d}); they'll be pruned on the next "
+                "prune pass. Raise BACKSCATTER_RETENTION_DAYS or set it to 0 to keep."
+            )
+        if args.dry_run or plan.to_fetch == 0:
+            return 0
+
+        if not args.yes and sys.stdin.isatty():
+            prompt = (
+                f"Fetch {plan.to_fetch} volume(s) "
+                f"(~{human_bytes(plan.bytes_estimate)}) for {site}? [y/N] "
+            )
+            if input(prompt).strip().lower() not in ("y", "yes"):
+                print("Aborted — nothing fetched.")
+                return 0
+
+        report = run_backfill(config, conn, site, start, end, now=now, client=client)
+        span = (
+            f"{report.oldest:%Y-%m-%d %H:%M}Z … {report.newest:%Y-%m-%d %H:%M}Z"
+            if report.oldest and report.newest
+            else "—"
+        )
+        print(
+            f"Backfilled {site}: fetched {report.fetched} "
+            f"(rendered {report.rendered}, render-failed {report.render_failed}), "
+            f"skipped {report.skipped}, already had {report.already_have}.\n"
+            f"  Span: {span}."
+        )
+        return 0
+    finally:
+        conn.close()
+
+
 def _dispatch(args: argparse.Namespace) -> int:
     if args.command == "pull":
         return _cmd_pull(args)
@@ -335,6 +464,8 @@ def _dispatch(args: argparse.Namespace) -> int:
         return _cmd_collect(args)
     if args.command == "prune":
         return _cmd_prune(args)
+    if args.command == "backfill":
+        return _cmd_backfill(args)
     print(f"backscatter {args.command}: not implemented yet")
     return 1
 

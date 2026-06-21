@@ -70,13 +70,17 @@ Two independent, configurable limits, enforced by one archive-wide prune.
   `Config` gains `retention_max_age_days`, `retention_max_size_bytes`,
   `prune_interval_s`, plus a `retention_active` convenience.
 
-## Known future interaction — backfill (flagged, not solved here)
-A first-class backfill command is parked (see ROADMAP "Later" / parked follow-ups).
-Because age is by `scan_time`, **backfilled old volumes would be immediately
-age-eligible** — pulled and then pruned on the next pass. That is a design
-consideration for the backfill slice (it might exempt backfilled data, age it by
-`downloaded_at`, or require an explicit retention window), **not** something this slice
-solves. Recorded so it isn't a surprise when backfill lands.
+## Known interaction — backfill (resolved in Slice 12)
+Because age is by `scan_time`, **backfilled old volumes are immediately age-eligible** —
+pulled and then pruned on the next pass. Slice 12's `backfill` command resolves this by
+**warning, not exempting**: when a requested range falls (wholly or partly) older than
+the active age window, `backfill` prints a clear warning (count of affected volumes +
+the cutoff date) telling the user to raise or disable `BACKSCATTER_RETENTION_DAYS` to
+keep them. We deliberately did *not* special-case backfilled data (no per-row "keep"
+flag, no aging by `downloaded_at`): retention stays a single, predictable
+scan_time-based rule, and the user decides whether a one-time historical look is worth
+widening the window. The warning fires in both `--dry-run` and the live run, before any
+fetch.
 
 ## Alternatives considered
 - **Ship a default size cap.** Rejected: any concrete GB number risks deleting a

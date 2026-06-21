@@ -55,6 +55,7 @@ uv run backscatter pull              # fetch the latest volume for the configure
 uv run backscatter render <volume>   # render one georeferenced frame (PNG + bounds)
 uv run backscatter serve             # serve the map UI at http://<host>:8000
 uv run backscatter prune --dry-run   # preview what retention would delete (no deletes)
+uv run backscatter backfill KFTG --start 2026-06-01T00:00:00Z --end 2026-06-02T00:00:00Z --dry-run
 ```
 
 `serve` opens a MapLibre map (keyless OpenFreeMap basemap) centered on your
@@ -83,6 +84,27 @@ Both can be active at once — a frame is pruned if it violates *either*. A runn
 touching anything** — run that first. The live command prompts for confirmation
 unless you pass `--yes`. Pruning removes the raw volume, its rendered frame, and the
 index row together, so a pruned frame leaves the timeline cleanly.
+
+### Backfill
+`collect` only ever fetches the *latest* volume. To fill the archive with **historical**
+data — a past storm, a gap while the collector was down — use `backfill`:
+
+```
+backscatter backfill [target] --start <UTC> --end <UTC> [--dry-run] [--yes]
+```
+
+`target` is a location name or a site code (defaults to the configured site). It lists
+the assembled Level 2 volumes for that site across the range and runs the same
+pipeline as collection per volume — download, render, index — deduped on
+`(site, scan_time)`, so it fills holes and **re-running a range is idempotent** (adds
+nothing). **`--dry-run` first**: it reports the volume count, span, and approximate
+download size without fetching (a year is thousands of pulls — see the scale before
+committing). The live run prompts for confirmation unless `--yes`.
+
+Note the retention interaction (see ADR-0009): the age limit prunes by `scan_time`, so
+if your range is older than `BACKSCATTER_RETENTION_DAYS`, backfilled frames will be
+pruned on the next prune pass. Backfill **warns** when that's the case — raise or
+disable retention (`BACKSCATTER_RETENTION_DAYS=0`) to keep them.
 
 The timeline is driven by `GET /api/frames?site=&start=&end=&cursor=&limit=` —
 rendered frames from the index, oldest-first, capped per request (default 500, max
