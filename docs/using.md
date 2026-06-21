@@ -25,6 +25,15 @@ Empty map means clear skies there — nothing to show.
     showing the lowest, most detailed sweep. backscatter doesn't alter it — same source
     the professionals use.
 
+## Light or dark
+
+Use the **☀ / ☾ button** in the top control bar to switch between light and dark mode —
+handy for night-time viewing. Your choice is remembered next time. Only the map and the
+controls change: the **radar colors stay exactly the same** in both themes, because they
+mean specific rain intensities (above), not decoration.
+
+![backscatter in dark mode](assets/app-overview-dark.png)
+
 ## The readout (top-left)
 
 The little panel in the top-left tells you exactly what you're looking at:

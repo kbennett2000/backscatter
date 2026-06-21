@@ -301,7 +301,7 @@ stamped each 0.5° ray (wider than a 250 m pixel past ~29 km) across many pixels
 wedges + per-ray speckle.
 - **Bilinear across the 4 nearest gates** (2 rays × 2 gates) in (azimuth, range), on dBZ
   before the palette. Pure helpers `_bracket_rays`/`_bracket_gates`/`_bilinear_sample` in
-  [raster.py](../src/backscatter/render/raster.py), fully vectorized.
+  `render/raster.py`, fully vectorized.
 - **Conservative masked-edge rule (the correctness crux):** a pixel is blended **only when
   all 4 corners are valid**; otherwise it keeps the nearest sample (NaN where no-data). So
   the valid/no-data boundary is **pixel-identical to NN** — interpolation never invents

@@ -121,6 +121,24 @@ def capture(url: str, out: Path) -> None:
         _ready(page)
         page.screenshot(path=out / "app-overview.png")
         print("  png: app-overview.png")
+        # Dark mode (Slice 21): toggle, wait for the dark basemap + re-added radar
+        # layer, shoot the same view, then toggle back to light for the rest.
+        page.click("#theme")
+        page.wait_for_function(
+            "() => document.documentElement.dataset.theme === 'dark'"
+            " && !!state.map.getLayer('radar-frame-layer')",
+            timeout=15000,
+        )
+        page.wait_for_timeout(4500)
+        page.screenshot(path=out / "app-overview-dark.png")
+        print("  png: app-overview-dark.png")
+        page.click("#theme")
+        page.wait_for_function(
+            "() => document.documentElement.dataset.theme === 'light'"
+            " && !!state.map.getLayer('radar-frame-layer')",
+            timeout=15000,
+        )
+        page.wait_for_timeout(1500)
         # land just after the biggest gap so the markers + flag show
         page.evaluate(
             "(function(){var g=state.gaps&&state.gaps.slice()"
