@@ -16,7 +16,7 @@ from backscatter.collect.collect import (
     collect_cycle,
     run_collect,
 )
-from backscatter.config import Config
+from backscatter.config import Config, Location
 from backscatter.ingest import naming, s3
 from backscatter.render.render import RenderResult
 from backscatter.sites.select import rank_sites
@@ -33,14 +33,16 @@ def s3_client() -> Iterator[object]:
 
 
 def _config(
-    tmp_path: Path, *, site: str = "KFTG", site_override: bool = False
+    tmp_path: Path,
+    *,
+    site: str = "KFTG",
+    site_override: bool = False,
+    locations: tuple[Location, ...] | None = None,
 ) -> Config:
-    # Elizabeth, CO -> nearest KFTG, then KPUX (failover candidate).
+    # Default: single Home at Elizabeth, CO -> nearest KFTG (then KPUX for failover).
+    home = Location("Home", 39.3603, -104.5969, site, True, site_override)
     return Config(
-        lat=39.3603,
-        lon=-104.5969,
-        site=site,
-        site_override=site_override,
+        locations=locations or (home,),
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "backscatter.db",
         poll_interval_s=0.0,
@@ -89,12 +91,17 @@ def test_cycle_stores_renders_and_indexes(tmp_path: Path, s3_client: object) -> 
     _put_volume(s3_client, datetime(2026, 6, 20, 11, 50, tzinfo=UTC))
     conn = _open_db(config)
 
-    res = collect_cycle(
+    results = collect_cycle(
         config, conn, now=now, client=s3_client, render_fn=_stub_render()
     )
-    assert res == CycleResult(
-        CycleStatus.RENDERED, "KFTG", datetime(2026, 6, 20, 11, 50, tzinfo=UTC)
-    )
+    assert results == [
+        CycleResult(
+            CycleStatus.RENDERED,
+            "KFTG",
+            datetime(2026, 6, 20, 11, 50, tzinfo=UTC),
+            location="Home",
+        )
+    ]
     row = db.latest_rendered_frame(conn)
     assert row is not None
     assert row["render_status"] == "rendered"
@@ -134,7 +141,7 @@ def test_failover_to_next_site(tmp_path: Path, s3_client: object) -> None:
     _put_volume(s3_client, datetime(2026, 6, 20, 11, 50, tzinfo=UTC), site="KPUX")
     conn = _open_db(config)
 
-    res = collect_cycle(
+    (res,) = collect_cycle(
         config, conn, now=now, client=s3_client, render_fn=_stub_render()
     )
     assert res.status is CycleStatus.RENDERED
@@ -243,7 +250,7 @@ def test_no_candidate_logs_warning(
     config = _config(tmp_path)
     conn = _open_db(config)
     with caplog.at_level("WARNING", logger="backscatter.collect"):
-        res = collect_cycle(
+        (res,) = collect_cycle(
             config, conn, now=datetime(2026, 6, 20, 12, 0, tzinfo=UTC),
             client=s3_client, render_fn=_stub_render(),
         )
@@ -257,7 +264,7 @@ def test_override_pins_primary_site(tmp_path: Path, s3_client: object) -> None:
     _put_volume(s3_client, datetime(2026, 6, 20, 11, 50, tzinfo=UTC), site="KTLX")
     conn = _open_db(config)
 
-    res = collect_cycle(
+    (res,) = collect_cycle(
         config, conn, now=datetime(2026, 6, 20, 12, 0, tzinfo=UTC),
         client=s3_client, render_fn=_stub_render(),
     )
@@ -278,9 +285,83 @@ def test_override_failover_walks_pinned_neighbors(
     _put_volume(s3_client, datetime(2026, 6, 20, 11, 50, tzinfo=UTC), site=neighbor)
     conn = _open_db(config)
 
-    res = collect_cycle(
+    (res,) = collect_cycle(
         config, conn, now=datetime(2026, 6, 20, 12, 0, tzinfo=UTC),
         client=s3_client, render_fn=_stub_render(),
     )
     assert res.status is CycleStatus.RENDERED
     assert res.site == neighbor
+
+
+# --- Slice 8: multiple locations ---------------------------------------------
+
+_NOW = datetime(2026, 6, 20, 12, 0, tzinfo=UTC)
+_SCAN = datetime(2026, 6, 20, 11, 50, tzinfo=UTC)
+
+
+def test_collect_iterates_all_locations(tmp_path: Path, s3_client: object) -> None:
+    home = Location("Home", 39.3603, -104.5969, "KFTG", True, False)  # -> KFTG
+    okc = Location("OKC", 35.4676, -97.5164, "KTLX", False, False)  # -> KTLX
+    config = _config(tmp_path, locations=(home, okc))
+    _put_volume(s3_client, _SCAN, site="KFTG")
+    _put_volume(s3_client, _SCAN, site="KTLX")
+    conn = _open_db(config)
+
+    results = collect_cycle(
+        config, conn, now=_NOW, client=s3_client, render_fn=_stub_render()
+    )
+    assert {r.location for r in results} == {"Home", "OKC"}
+    assert all(r.status is CycleStatus.RENDERED for r in results)
+    sites = {r["site"] for r in conn.execute("SELECT site FROM volumes")}
+    assert sites == {"KFTG", "KTLX"}
+
+
+def test_co_located_locations_dedupe_to_one_frame(
+    tmp_path: Path, s3_client: object
+) -> None:
+    # Home (Elizabeth) and Parker both have KFTG as their nearest radar.
+    home = Location("Home", 39.3603, -104.5969, "KFTG", True, False)
+    parker = Location("Parker", 39.5186, -104.7614, "KFTG", False, False)
+    config = _config(tmp_path, locations=(home, parker))
+    _put_volume(s3_client, _SCAN)  # a single KFTG volume
+    conn = _open_db(config)
+    calls: list[Path] = []
+
+    results = collect_cycle(
+        config, conn, now=_NOW, client=s3_client, render_fn=_stub_render(calls)
+    )
+    # First location stores+renders; the second sees it already indexed.
+    assert [(r.location, r.status, r.site) for r in results] == [
+        ("Home", CycleStatus.RENDERED, "KFTG"),
+        ("Parker", CycleStatus.ALREADY_HAVE, "KFTG"),
+    ]
+    assert len(calls) == 1  # rendered exactly once (no double render)
+    n = conn.execute("SELECT COUNT(*) AS n FROM volumes").fetchone()["n"]
+    assert n == 1  # one shared frame, not one per location
+    stored = list((config.data_dir / "KFTG" / "20260620").iterdir())
+    assert len(stored) == 1  # one volume file on disk
+
+
+def test_one_location_error_does_not_stop_others(
+    tmp_path: Path, s3_client: object
+) -> None:
+    home = Location("Home", 39.3603, -104.5969, "KFTG", True, False)
+    okc = Location("OKC", 35.4676, -97.5164, "KTLX", False, False)
+    config = _config(tmp_path, locations=(home, okc))
+    _put_volume(s3_client, _SCAN, site="KFTG")
+    _put_volume(s3_client, _SCAN, site="KTLX")
+    conn = _open_db(config)
+    good = _stub_render()
+
+    def render(volume_path: Path, config: Config) -> RenderResult:
+        if "KFTG" in Path(volume_path).name:
+            raise RuntimeError("decode blew up for KFTG")
+        return good(volume_path, config)
+
+    results = collect_cycle(
+        config, conn, now=_NOW, client=s3_client, render_fn=render
+    )
+    by_loc = {r.location: r for r in results}
+    assert by_loc["Home"].status is CycleStatus.RENDER_FAILED  # KFTG failed
+    assert by_loc["OKC"].status is CycleStatus.RENDERED  # OKC still collected
+    assert db.latest_rendered_frame(conn, "KTLX") is not None

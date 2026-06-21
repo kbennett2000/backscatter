@@ -10,7 +10,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from backscatter.config import Config
+from backscatter.config import Config, Location
 from backscatter.ingest import s3
 from backscatter.ingest.pull import PullStatus, find_latest, pull_latest
 from backscatter.store import db
@@ -39,11 +39,9 @@ def _put_raw(client: object, key: str) -> None:
 
 
 def _config(tmp_path: Path, site: str = "KFTG") -> Config:
+    home = Location("Home", 39.3603, -104.5969, site, True, False)
     return Config(
-        lat=39.3603,
-        lon=-104.5969,
-        site=site,
-        site_override=False,
+        locations=(home,),
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "backscatter.db",
         poll_interval_s=60.0,

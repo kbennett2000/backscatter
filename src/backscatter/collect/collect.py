@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from backscatter.config import Config
+from backscatter.config import Config, Location
 from backscatter.ingest import s3
 from backscatter.ingest.pull import PullResult, PullStatus, fetch_volume
 from backscatter.ingest.s3 import S3Client
@@ -47,31 +47,35 @@ class CycleStatus(StrEnum):
 
 @dataclass(frozen=True)
 class CycleResult:
-    """What one cycle did, for logging and tests."""
+    """What one location did in one cycle, for logging and tests."""
 
     status: CycleStatus
     site: str | None = None
     scan_time: datetime | None = None
+    location: str | None = None
 
 
 def _ts(dt: datetime | None) -> str:
     return f"{dt:%Y-%m-%d %H:%M:%S}Z" if dt else "?"
 
 
-def _candidate_sites(config: Config) -> list[RankedSite]:
-    """Failover candidates, nearest first.
+def _candidate_sites(location: Location) -> list[RankedSite]:
+    """Failover candidates for a location, nearest first.
 
-    With an explicit site override, rank from the **pinned** site's coordinates so it
-    is the primary and failover walks its neighbors (SITE means the same thing in
-    `pull` and `collect`). Otherwise rank from the configured lat/lon.
+    With an explicit site override (default location only), rank from the **pinned**
+    site's coordinates so it is the primary and failover walks its neighbors (SITE
+    means the same thing in `pull` and `collect`). Otherwise rank from the location's
+    lat/lon.
     """
-    if config.site_override:
-        pinned = site_by_icao(config.site)
+    if location.site_override:
+        pinned = site_by_icao(location.site)
         if pinned is not None:
             return rank_sites(pinned.lat, pinned.lon)[:FAILOVER_CANDIDATES]
         # Unknown override ICAO: fall back to geographic ranking rather than fail.
-        log.warning("override site %s not in table; ranking from lat/lon", config.site)
-    return rank_sites(config.lat, config.lon)[:FAILOVER_CANDIDATES]
+        log.warning(
+            "override site %s not in table; ranking from lat/lon", location.site
+        )
+    return rank_sites(location.lat, location.lon)[:FAILOVER_CANDIDATES]
 
 
 def collect_cycle(
@@ -81,28 +85,60 @@ def collect_cycle(
     now: datetime,
     client: S3Client,
     render_fn: RenderFn = render_volume,
+) -> list[CycleResult]:
+    """Run one pull→render→index pass over **every** configured location.
+
+    Locations are processed sequentially, so two locations sharing a nearest radar
+    converge on one frame: the first stores it, the second sees ``ALREADY_HAVE`` —
+    no double pull/store/render. One location's unexpected error is caught so the
+    others (and the loop) carry on.
+    """
+    results: list[CycleResult] = []
+    for location in config.locations:
+        try:
+            results.append(
+                _collect_location(
+                    location, config, conn, now=now, client=client, render_fn=render_fn
+                )
+            )
+        except Exception:
+            log.exception("location %s errored this cycle; continuing", location.name)
+            results.append(CycleResult(CycleStatus.NOTHING, location=location.name))
+    return results
+
+
+def _collect_location(
+    location: Location,
+    config: Config,
+    conn: sqlite3.Connection,
+    *,
+    now: datetime,
+    client: S3Client,
+    render_fn: RenderFn,
 ) -> CycleResult:
-    """Run one pull→render→index cycle, with failover across nearby sites."""
-    candidates = _candidate_sites(config)
-    for rank, ranked in enumerate(candidates):
+    """Collect one location, with failover across its own ranked neighbors."""
+    name = location.name
+    for rank, ranked in enumerate(_candidate_sites(location)):
         site = ranked.site.icao
         result = fetch_volume(config, site, conn, now=now, client=client)
 
         if result.status is PullStatus.NO_VOLUME:
-            log.warning("no recent volume for %s; failing over", site)
+            log.warning("[%s] no recent volume for %s; failing over", name, site)
             continue
 
         if result.status is PullStatus.ALREADY_HAVE:
-            log.info("%s %s already indexed — nothing new", site, _ts(result.scan_time))
-            return CycleResult(CycleStatus.ALREADY_HAVE, site, result.scan_time)
+            log.info("[%s] %s %s already indexed", name, site, _ts(result.scan_time))
+            return CycleResult(
+                CycleStatus.ALREADY_HAVE, site, result.scan_time, location=name
+            )
 
         # STORED — a genuinely new scan.
         if rank > 0:
-            log.warning("failover: collected %s (nearer sites had no data)", site)
-        return _render_and_record(config, conn, result, render_fn, now)
+            log.warning("[%s] failover: collected %s (nearer had no data)", name, site)
+        return _render_and_record(config, conn, result, render_fn, now, location=name)
 
-    log.warning("no candidate site produced a volume this cycle")
-    return CycleResult(CycleStatus.NOTHING)
+    log.warning("[%s] no candidate site produced a volume this cycle", name)
+    return CycleResult(CycleStatus.NOTHING, location=name)
 
 
 def _render_and_record(
@@ -111,11 +147,13 @@ def _render_and_record(
     result: PullResult,
     render_fn: RenderFn,
     now: datetime,
+    *,
+    location: str,
 ) -> CycleResult:
     # STORED guarantees these are set; assert narrows the Optional for the type checker.
     assert result.path is not None and result.scan_time is not None
     site, scan_time = result.site, result.scan_time
-    log.info("stored %s %s; rendering", site, _ts(scan_time))
+    log.info("[%s] stored %s %s; rendering", location, site, _ts(scan_time))
     try:
         render = render_fn(result.path, config)
         image_path = (
@@ -132,12 +170,20 @@ def _render_and_record(
             bounds=render.bounds_wgs84,
             rendered_at=now,
         )
-        log.info("rendered %s %s -> %s", site, _ts(scan_time), image_path)
-        return CycleResult(CycleStatus.RENDERED, site, scan_time)
+        log.info(
+            "[%s] rendered %s %s -> %s", location, site, _ts(scan_time), image_path
+        )
+        return CycleResult(
+            CycleStatus.RENDERED, site, scan_time, location=location
+        )
     except Exception:
-        log.exception("render failed for %s %s; raw volume kept", site, _ts(scan_time))
+        log.exception(
+            "[%s] render failed for %s %s; volume kept", location, site, _ts(scan_time)
+        )
         db.mark_render_failed(conn, site, scan_time)
-        return CycleResult(CycleStatus.RENDER_FAILED, site, scan_time)
+        return CycleResult(
+            CycleStatus.RENDER_FAILED, site, scan_time, location=location
+        )
 
 
 def run_collect(

@@ -58,3 +58,25 @@ Resolution and precedence:
 The single-source-of-truth and "env reads live only in `config.py`" invariants are
 unchanged. `pull` is untouched — it still reads `config.site`, which is now
 resolved rather than hardcoded.
+
+## Update — Slice 8 (multiple locations)
+Config generalizes from a single lat/lon to a **list of named locations**, exactly
+one flagged the default ("Home"). `Config.locations: tuple[Location, ...]`; each
+`Location` carries `name, lat, lon, site, is_default, site_override`. The former
+flat fields (`lat/lon/site/site_override`) are now **read-only properties delegating
+to the default location**, so every existing single-location consumer keeps working.
+
+- **Source:** `BACKSCATTER_LOCATIONS` — a JSON list of `{name, lat, lon, default?}`.
+  Absent it, the single `BACKSCATTER_LAT`/`BACKSCATTER_LON` form is treated as a
+  one-entry list named "Home" (back-compat). TOML can replace the JSON env later
+  without touching call sites.
+- **Validation** (at load, raises `ValueError`): ≥1 location, **exactly one**
+  default, unique names (case-insensitive).
+- **Site override applies to the default location only.** `BACKSCATTER_SITE` (or the
+  `pull` positional) pins Home's `site`; every other location resolves its own
+  nearest radar. Documented because it's the one non-obvious interaction.
+- **Frames are per-radar, not per-location.** The `volumes` index is unchanged
+  (`(site, scan_time)`); a location maps to frames via its resolved `site`. Two
+  co-located locations share one radar's frames — `collect` stores each volume once
+  (dedupe on `(site, scan_time)`), never per-location. The API resolves a `location`
+  param to its site.

@@ -69,9 +69,11 @@ def _frame_from_row(row: sqlite3.Row) -> FrameMeta:
     )
 
 
-def latest_frame(conn: sqlite3.Connection) -> FrameMeta | None:
-    """Return the newest rendered frame from the index, or None."""
-    row = db.latest_rendered_frame(conn)
+def latest_frame(
+    conn: sqlite3.Connection, site: str | None = None
+) -> FrameMeta | None:
+    """Return the newest rendered frame (optionally for one site), or None."""
+    row = db.latest_rendered_frame(conn, site)
     return _frame_from_row(row) if row is not None else None
 
 

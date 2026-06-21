@@ -164,13 +164,18 @@ def mark_render_failed(
     conn.commit()
 
 
-def latest_rendered_frame(conn: sqlite3.Connection) -> sqlite3.Row | None:
-    """Newest successfully-rendered frame, or None (incl. when no table yet)."""
+def latest_rendered_frame(
+    conn: sqlite3.Connection, site: str | None = None
+) -> sqlite3.Row | None:
+    """Newest rendered frame, optionally for one site, or None (incl. no table)."""
+    sql = "SELECT * FROM volumes WHERE render_status = 'rendered'"
+    params: list[object] = []
+    if site is not None:
+        sql += " AND site = ?"
+        params.append(site)
+    sql += " ORDER BY scan_time DESC LIMIT 1"
     try:
-        row: sqlite3.Row | None = conn.execute(
-            "SELECT * FROM volumes WHERE render_status = 'rendered' "
-            "ORDER BY scan_time DESC LIMIT 1"
-        ).fetchone()
+        row: sqlite3.Row | None = conn.execute(sql, params).fetchone()
         return row
     except sqlite3.OperationalError:
         return None  # table doesn't exist yet (serve before any collect)

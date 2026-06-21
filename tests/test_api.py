@@ -12,18 +12,16 @@ from PIL import Image
 
 from backscatter.api.app import create_app
 from backscatter.api.frames import latest_frame
-from backscatter.config import Config
+from backscatter.config import Config, Location
 from backscatter.store import db
 
 BOUNDS = (-107.23, 37.71, -101.86, 41.86)  # west, south, east, north
 
 
-def _config(tmp_path: Path) -> Config:
+def _config(tmp_path: Path, *, extra: tuple[Location, ...] = ()) -> Config:
+    home = Location("Home", 39.3603, -104.5969, "KFTG", True, False)
     return Config(
-        lat=39.3603,
-        lon=-104.5969,
-        site="KFTG",
-        site_override=False,
+        locations=(home, *extra),
         data_dir=tmp_path / "data",
         db_path=tmp_path / "data" / "backscatter.db",
         poll_interval_s=60.0,
@@ -286,3 +284,49 @@ def test_frames_window_empty_range_has_null_cursor(tmp_path: Path) -> None:
     body = resp.json()
     assert body["frames"] == []
     assert body["next_cursor"] is None
+
+
+# --- Slice 8: multiple locations ---------------------------------------------
+
+_OKC = Location("OKC", 35.4676, -97.5164, "KTLX", False, False)
+
+
+def test_api_locations(tmp_path: Path) -> None:
+    config = _config(tmp_path, extra=(_OKC,))
+    body = TestClient(create_app(config)).get("/api/locations").json()
+    assert body["locations"] == [
+        {"name": "Home", "lat": 39.3603, "lon": -104.5969,
+         "default": True, "site": "KFTG"},
+        {"name": "OKC", "lat": 35.4676, "lon": -97.5164,
+         "default": False, "site": "KTLX"},
+    ]
+
+
+def test_api_frames_location_param_resolves_site(tmp_path: Path) -> None:
+    config = _config(tmp_path, extra=(_OKC,))
+    _seed_frame(config, scan_time="2026-06-20T21:00:00+00:00")  # KFTG
+    _seed_frame(config, site="KTLX", volume="KTLX20260620_210000_V06",
+                scan_time="2026-06-20T21:00:00+00:00")
+    client = TestClient(create_app(config))
+
+    default = client.get("/api/frames").json()  # Home -> KFTG
+    assert {f["site"] for f in default["frames"]} == {"KFTG"}
+    okc = client.get("/api/frames?location=OKC").json()
+    assert {f["site"] for f in okc["frames"]} == {"KTLX"}
+
+
+def test_api_frames_unknown_location_400(tmp_path: Path) -> None:
+    resp = TestClient(create_app(_config(tmp_path))).get("/api/frames?location=Nope")
+    assert resp.status_code == 400
+
+
+def test_api_latest_is_site_scoped_to_home(tmp_path: Path) -> None:
+    config = _config(tmp_path, extra=(_OKC,))
+    # KTLX frame is newer than KFTG, but /api/latest defaults to Home (KFTG).
+    _seed_frame(config, scan_time="2026-06-20T21:00:00+00:00")  # KFTG
+    _seed_frame(config, site="KTLX", volume="KTLX20260620_230000_V06",
+                scan_time="2026-06-20T23:00:00+00:00")  # KTLX, newer
+    client = TestClient(create_app(config))
+
+    assert client.get("/api/latest").json()["site"] == "KFTG"  # Home
+    assert client.get("/api/latest?location=OKC").json()["site"] == "KTLX"

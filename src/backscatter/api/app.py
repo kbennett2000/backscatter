@@ -38,6 +38,20 @@ def _parse_ts(value: str | None, label: str) -> datetime | None:
             status_code=400, detail=f"invalid {label} timestamp: {value!r}"
         ) from exc
 
+def _resolve_site(config: Config, site: str | None, location: str | None) -> str:
+    """Resolve which radar to serve: explicit site > location's site > Home's site."""
+    if site:
+        return site.upper()
+    if location:
+        loc = config.location_by_name(location)
+        if loc is None:
+            raise HTTPException(
+                status_code=400, detail=f"unknown location: {location!r}"
+            )
+        return loc.site
+    return config.site  # Home (default location)
+
+
 # Frontend lives at the repo-level web/ dir (self-hosted from source). Resolve it
 # relative to this file: src/backscatter/api/app.py -> repo root.
 _DEFAULT_WEB_DIR = Path(__file__).resolve().parents[3] / "web"
@@ -54,11 +68,29 @@ def create_app(config: Config, *, web_dir: Path | None = None) -> FastAPI:
     def api_config() -> dict[str, object]:
         return {"center": [config.lon, config.lat], "site": config.site}
 
+    @app.get("/api/locations")
+    def api_locations() -> dict[str, object]:
+        return {
+            "locations": [
+                {
+                    "name": loc.name,
+                    "lat": loc.lat,
+                    "lon": loc.lon,
+                    "default": loc.is_default,
+                    "site": loc.site,
+                }
+                for loc in config.locations
+            ]
+        }
+
     @app.get("/api/latest")
-    def api_latest() -> dict[str, object]:
+    def api_latest(
+        site: str | None = None, location: str | None = None
+    ) -> dict[str, object]:
+        resolved_site = _resolve_site(config, site, location)
         conn = db.connect(config.db_path)
         try:
-            frame = latest_frame(conn)
+            frame = latest_frame(conn, resolved_site)
         finally:
             conn.close()
         if frame is None:
@@ -68,6 +100,7 @@ def create_app(config: Config, *, web_dir: Path | None = None) -> FastAPI:
     @app.get("/api/frames")
     def api_frames(
         site: str | None = None,
+        location: str | None = None,
         start: str | None = None,
         end: str | None = None,
         cursor: str | None = None,
@@ -82,8 +115,10 @@ def create_app(config: Config, *, web_dir: Path | None = None) -> FastAPI:
           ``[start, end]`` window. ``cursor`` is an exclusive lower bound
           (a prior frame's ``scan_time``); pass back ``next_cursor`` to page
           forward through a window deeper than the cap. Empty range → 200, [].
+        ``location`` (a configured location name) resolves to its site; ``site``
+        wins if both are given; otherwise defaults to Home.
         """
-        resolved_site = (site or config.site).upper()
+        resolved_site = _resolve_site(config, site, location)
         start_dt = _parse_ts(start, "start")
         end_dt = _parse_ts(end, "end")
         cursor_dt = _parse_ts(cursor, "cursor")
@@ -116,9 +151,11 @@ def create_app(config: Config, *, web_dir: Path | None = None) -> FastAPI:
         }
 
     @app.get("/api/frames/range")
-    def api_frames_range(site: str | None = None) -> dict[str, object]:
+    def api_frames_range(
+        site: str | None = None, location: str | None = None
+    ) -> dict[str, object]:
         """Earliest/latest rendered scan_time + count for a site (archive extent)."""
-        resolved_site = (site or config.site).upper()
+        resolved_site = _resolve_site(config, site, location)
         conn = db.connect(config.db_path)
         try:
             mn, mx, count = frames_extent(conn, site=resolved_site)

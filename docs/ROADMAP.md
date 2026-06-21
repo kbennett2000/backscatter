@@ -67,6 +67,22 @@ silently truncating history.
 - **Done when:** you can pick any historical window the archive covers and scrub /
   play across it, paging through spans larger than one request without gaps or dupes.
 
+## Slice 8 — Multiple locations + collect-all
+Generalize the single configured location into a named list (one flagged
+Home/default) and make `collect` archive all of them continuously.
+- **Config:** `BACKSCATTER_LOCATIONS` JSON list (back-compat: the old single
+  lat/lon = a one-entry "Home"); validate ≥1, exactly-one-default, unique names; an
+  explicit SITE override pins Home only. Frames stay per-radar (no index change).
+- **Collector:** each cycle iterates every location, resolving its nearest site and
+  pull→render→indexing — deduped on `(site, scan_time)`, so co-located locations
+  converge on one frame. Per-location failover + resilience.
+- **API:** `/api/locations`; `/api/frames`, `/api/frames/range`, `/api/latest` take
+  an optional `location` (defaults to Home).
+- Data model + collector + API only; UI (active-location switching) is Slice 9.
+- **Done when:** collect archives several locations at once, two co-located ones
+  produce a single shared frame (no double pull/store), and the API resolves any
+  configured location to its site.
+
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher
 - MRMS national composite at low zoom (wide-area context — the *right* way to use

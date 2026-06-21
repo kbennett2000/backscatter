@@ -207,12 +207,31 @@ def _cmd_collect(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGINT, _handle)
     signal.signal(signal.SIGTERM, _handle)
 
+    locs = ", ".join(
+        f"{loc.name}→{loc.site}{'*' if loc.is_default else ''}"
+        for loc in config.locations
+    )
     print(
-        f"Collecting near {config.lat:.4f},{config.lon:.4f} "
-        f"(nearest {config.site}) every {config.poll_interval_s:.0f}s — Ctrl-C to stop."
+        f"Collecting {len(config.locations)} location(s) [{locs}] "
+        f"every {config.poll_interval_s:.0f}s — Ctrl-C to stop. (*=default)"
     )
     run_collect(config, stop_event=stop, max_cycles=args.max_cycles)
     return 0
+
+
+def _dispatch(args: argparse.Namespace) -> int:
+    if args.command == "pull":
+        return _cmd_pull(args)
+    if args.command == "site":
+        return _cmd_site(args)
+    if args.command == "render":
+        return _cmd_render(args)
+    if args.command == "serve":
+        return _cmd_serve(args)
+    if args.command == "collect":
+        return _cmd_collect(args)
+    print(f"backscatter {args.command}: not implemented yet")
+    return 1
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -224,23 +243,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return 0
 
-    if args.command == "pull":
-        return _cmd_pull(args)
-
-    if args.command == "site":
-        return _cmd_site(args)
-
-    if args.command == "render":
-        return _cmd_render(args)
-
-    if args.command == "serve":
-        return _cmd_serve(args)
-
-    if args.command == "collect":
-        return _cmd_collect(args)
-
-    print(f"backscatter {args.command}: not implemented yet")
-    return 1
+    try:
+        return _dispatch(args)
+    except ValueError as exc:
+        # Surface config errors (bad BACKSCATTER_LOCATIONS, etc.) cleanly.
+        print(f"Configuration error: {exc}")
+        return 2
 
 
 if __name__ == "__main__":
