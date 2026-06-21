@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif">
+  <defs>
+    <radialGradient id="bg" cx="22%" cy="50%" r="85%">
+      <stop offset="0%" stop-color="#121a26"/>
+      <stop offset="100%" stop-color="#0b1018"/>
+    </radialGradient>
+    <!-- radar sweep trail: bright amber edge fading to nothing behind it -->
+    <linearGradient id="sweep" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffb020" stop-opacity="0"/>
+      <stop offset="75%" stop-color="#ffb020" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#ffb020" stop-opacity="0.28"/>
+    </linearGradient>
+    <filter id="soft" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2.5"/>
+    </filter>
+    <clipPath id="ppi"><circle cx="215" cy="150" r="125"/></clipPath>
+  </defs>
+
+  <rect width="1200" height="300" fill="url(#bg)"/>
+
+  <!-- ===== radar PPI (plan-position indicator) motif, 0deg = North, CW ===== -->
+  <g clip-path="url(#ppi)">
+    <!-- reflectivity storm complex, real NWS dBZ palette: green -> yellow -> red core -->
+    <g filter="url(#soft)">
+      <ellipse cx="250" cy="120" rx="62" ry="48" fill="#02fd02" opacity="0.55"/>
+      <ellipse cx="238" cy="128" rx="46" ry="38" fill="#01c501" opacity="0.7"/>
+      <ellipse cx="225" cy="135" rx="34" ry="30" fill="#008e00" opacity="0.55"/>
+      <ellipse cx="252" cy="118" rx="30" ry="24" fill="#fdf802" opacity="0.8"/>
+      <ellipse cx="262" cy="112" rx="20" ry="17" fill="#e5bc00" opacity="0.85"/>
+      <ellipse cx="270" cy="106" rx="14" ry="12" fill="#fd9500" opacity="0.9"/>
+      <ellipse cx="276" cy="101" rx="9" ry="8" fill="#fd0000" opacity="0.95"/>
+      <ellipse cx="279" cy="98" rx="5" ry="4.5" fill="#d40000"/>
+      <!-- a second, lighter cell down-range (SW) -->
+      <ellipse cx="168" cy="196" rx="34" ry="26" fill="#02fd02" opacity="0.4"/>
+      <ellipse cx="172" cy="192" rx="20" ry="16" fill="#fdf802" opacity="0.6"/>
+      <ellipse cx="176" cy="189" rx="10" ry="8" fill="#fd9500" opacity="0.75"/>
+    </g>
+    <!-- sweep trail wedge from North toward NE -->
+    <path d="M215,150 L215,25 A125,125 0 0,1 286.7,47.6 Z" fill="url(#sweep)"/>
+  </g>
+
+  <!-- range rings + crosshair (drawn over, faint) -->
+  <g fill="none" stroke="#ffffff" stroke-opacity="0.12">
+    <circle cx="215" cy="150" r="60"/>
+    <circle cx="215" cy="150" r="92"/>
+    <circle cx="215" cy="150" r="125"/>
+  </g>
+  <g stroke="#ffffff" stroke-opacity="0.07" stroke-width="1">
+    <line x1="90" y1="150" x2="340" y2="150"/>
+    <line x1="215" y1="25" x2="215" y2="275"/>
+  </g>
+  <!-- the sweep beam (leading edge), amber, with a glow + center hub -->
+  <g filter="url(#glow)">
+    <line x1="215" y1="150" x2="286.7" y2="47.6" stroke="#ffb020" stroke-width="2.5" stroke-linecap="round"/>
+  </g>
+  <circle cx="215" cy="150" r="3.5" fill="#ffb020"/>
+  <!-- tiny North tick -->
+  <text x="215" y="18" fill="#ffffff" fill-opacity="0.4" font-size="11" font-weight="600" text-anchor="middle">N</text>
+
+  <!-- ===== wordmark + tagline ===== -->
+  <text x="430" y="148" fill="#ffffff" font-size="78" font-weight="600" letter-spacing="-1.5">backscatter</text>
+  <rect x="433" y="166" width="92" height="3" rx="1.5" fill="#ffb020"/>
+  <text x="434" y="200" fill="#9aa6b6" font-size="22" font-weight="400">Self-hosted weather radar with an unlimited archive</text>
+  <text x="434" y="234" fill="#5f6b7c" font-size="15" font-weight="400">NEXRAD Level&#8201;2 super-resolution &#183; any US location &#183; NOAA open data</text>
+</svg>

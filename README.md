@@ -1,16 +1,32 @@
-# backscatter
+<p align="center">
+  <img src="docs/assets/banner.png" alt="backscatter" width="100%">
+</p>
 
-Self-hosted, browser-based NEXRAD weather radar with an **unlimited playback archive**.
+<p align="center"><em>Self-hosted NEXRAD weather radar with an unlimited playback archive.</em></p>
 
-backscatter pulls free NEXRAD Level 2 radar data from NOAA's public archive,
-renders it on a map in your browser, and — unlike subscription radar apps — keeps
-every frame it collects. Scrub back across an entire storm, or an entire season,
-instead of being capped to the most recent loop.
+<p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green.svg"></a>
+  <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-blue.svg">
+  <img alt="Docker: compose up" src="https://img.shields.io/badge/docker-compose%20up-2496ED?logo=docker&logoColor=white">
+  <img alt="Status: early / WIP" src="https://img.shields.io/badge/status-early%2FWIP-orange.svg">
+</p>
 
-It renders single-site **Level 2 super-resolution** (0.5° × 250 m) — the highest
-resolution physically available for a location — and works for **any location in
-the continental US**: point it at a lat/lon and it picks the nearest covering
-radar automatically.
+backscatter pulls free NEXRAD Level 2 radar from NOAA's public archive, renders it on a
+map in your browser, and — unlike subscription radar apps — **keeps every frame it
+collects**, so you can scrub back across an entire storm or an entire season instead of
+being capped to the most recent loop. It renders single-site **Level 2
+super-resolution** (0.5° × 250 m — the highest resolution available for a point) and
+works for **any location in the continental US**: point it at a lat/lon and it picks the
+nearest covering radar automatically.
+
+<p align="center">
+  <img src="docs/assets/screenshot.png" width="100%"
+       alt="backscatter web UI — live NEXRAD reflectivity on a map with a playback timeline and missing-data gap markers">
+</p>
+
+**Quick links:** [Run with Docker](#run-with-docker-recommended-for-self-hosting) ·
+[Roadmap](docs/ROADMAP.md) · [Contributing](CONTRIBUTING.md) ·
+Docs site *(coming — see the [roadmap](docs/ROADMAP.md))*
 
 > **Status:** early / work in progress. Built as a personal project.
 
@@ -154,4 +170,7 @@ min/max scan time and count so the picker can bound itself to what exists.
 (URL-encode timestamp params — `scan_time` contains `+`.)
 
 ## License
-TBD.
+[MIT](LICENSE) © 2026 Kris Bennett.
+
+Radar data is NOAA NEXRAD Level 2, used unaltered from NOAA's free public archive;
+this project is not endorsed by or affiliated with NOAA or the National Weather Service.
