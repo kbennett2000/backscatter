@@ -311,6 +311,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pillow" },
     { name = "pyproj" },
+    { name = "scipy" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -335,6 +336,7 @@ requires-dist = [
     { name = "numpy" },
     { name = "pillow" },
     { name = "pyproj" },
+    { name = "scipy" },
     { name = "uvicorn", extras = ["standard"] },
 ]
 

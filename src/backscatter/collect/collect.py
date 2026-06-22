@@ -31,6 +31,7 @@ from backscatter.sites.select import RankedSite, rank_sites
 from backscatter.sites.table import site_by_icao
 from backscatter.store import db
 from backscatter.store import locations as locations_store
+from backscatter.track.detect import detect_cells
 
 log = logging.getLogger("backscatter.collect")
 
@@ -301,6 +302,9 @@ def _render_live_and_record(
         log.info(
             "[live] %s %s -> %s (source=%s)", site, _ts(scan_time), image_path, source
         )
+        _track_cells_for_frame(
+            config, conn, site=site, scan_time=scan_time, render=render
+        )
         return True
     except Exception:
         log.exception(
@@ -357,6 +361,33 @@ def _reconcile_live_frames(
         log.info("[live] reconciled %s %s -> source=assembled", site, _ts(scan_time))
 
 
+def _track_cells_for_frame(
+    config: Config,
+    conn: sqlite3.Connection,
+    *,
+    site: str,
+    scan_time: datetime,
+    render: RenderResult,
+) -> None:
+    """Identify storm cells for a just-rendered frame and store them (Slice 28a).
+
+    Gated by ``config.track_cells`` and best-effort: it runs off the render's in-memory
+    raster (no re-projection) and swallows any error, so tracking never fails a frame
+    whose imagery rendered fine. Cross-frame association + motion is Slice 28b; this is
+    per-frame identification only.
+    """
+    if not config.track_cells or render.raster is None:
+        return
+    try:
+        cells = detect_cells(render.raster.dbz, render.raster.bounds_3857)
+        db.record_cells(conn, site=site, scan_time=scan_time, cells=cells)
+        log.info("[track] %s %s -> %d cells", site, _ts(scan_time), len(cells))
+    except Exception:
+        log.exception(
+            "[track] cell detection failed for %s %s; skipping", site, _ts(scan_time)
+        )
+
+
 def render_and_index(
     config: Config,
     conn: sqlite3.Connection,
@@ -389,6 +420,9 @@ def render_and_index(
             rendered_at=now,
         )
         log.info("[%s] rendered %s %s -> %s", tag, site, _ts(scan_time), image_path)
+        _track_cells_for_frame(
+            config, conn, site=site, scan_time=scan_time, render=render
+        )
         return True
     except Exception:
         log.exception(

@@ -23,7 +23,7 @@ from backscatter.decode.volume import (
 )
 from backscatter.ingest import naming
 from backscatter.render.colormap import dbz_to_rgba
-from backscatter.render.raster import rasterize
+from backscatter.render.raster import RasterResult, rasterize
 from backscatter.sites.table import Site, site_by_icao
 
 
@@ -40,6 +40,10 @@ class RenderResult:
     height: int
     bounds_wgs84: tuple[float, float, float, float]  # west, south, east, north
     bounds_3857: tuple[float, float, float, float]
+    # The dBZ grid this frame was rendered from, kept so storm-cell detection
+    # (Slice 28) runs off the same raster without re-projecting. Optional: stub
+    # render functions in tests omit it, and tracking simply skips when absent.
+    raster: RasterResult | None = None
 
 
 def _lookup_site(icao: str) -> Site:
@@ -119,4 +123,5 @@ def render_sweep(
         height=raster.height,
         bounds_wgs84=raster.bounds_wgs84,
         bounds_3857=raster.bounds_3857,
+        raster=raster,
     )

@@ -432,9 +432,32 @@ dropped. Surface **every** 0.5° surveillance cut (base + SAILS/MRLE) as its own
   dual-source wiring + reconcile-skip; **merge gated on a RadarScope visual check on a live SAILS
   event** (per CLAUDE.md — a rendering change doesn't merge on "it produced frames").
 
+## Storm cell tracking (28a DONE; 28b/28c planned)
+RadarScope-style storm tracks. Library survey (TINT/tintX/tobac/Py-ART) concluded none fit
+our streaming, polar-sweep, small-image loop cleanly — each is batch-shaped, wants a grid type
+we don't hold, and is either fragile (TINT: alpha, git-only) or heavy (tintX pins `numpy<2.0`;
+tobac drags iris/xarray). Decision: **port the documented TITAN/SCIT method** ourselves on the
+grid we already render, reusing `scipy.ndimage` (already present via pyart — zero image cost).
+Tracking is *estimation*, framed in-UI as estimated motion, never a nowcast (not-for-life-safety).
+
+- **Slice 28a — identify + store (done).** `track/detect.py::detect_cells` thresholds the
+  rasterized dBZ grid (`RasterResult.dbz`), labels connected components (`scipy.ndimage`), and
+  reduces each to an intensity-weighted centroid + peak dBZ + `cos(lat)`-corrected ground area.
+  Centroid px→lon/lat reuses the renderer's `PIXEL_SIZE_M` origin and `mercator_to_lonlat` (no new
+  geometry). New `cells` table keyed to `(site, scan_time)` with `track_id`/`u_ms`/`v_ms` nullable
+  (staged for 28b, no later migration); computed in `collect` (assembled + live paths) behind
+  `BACKSCATTER_TRACK_CELLS`, best-effort. Value-based tests (known centroid/area/lon-lat, flip
+  guard, threshold/area filters) + DB round-trip; real-data smoke (correctly finds 0 storm cells
+  in a weak fixture — no false positives).
+- **Slice 28b — association + motion (planned).** Persistent `track_id` continuity by matching
+  each frame's cells against the previous stored frame (TITAN cost-matched nearest cell, motion
+  first-guess); motion vector per track from position history; simple split/merge (a split spawns a
+  new track). Tests: synthetic 2-frame displacement → known u/v, ID continuity, new/lost tracks.
+- **Slice 28c — API + map overlay (planned).** `/cells` endpoint, MapLibre markers +
+  projected-motion line, off-by-default toggle, in-UI estimation disclaimer. **Visual check vs
+  RadarScope** for the same storms.
+
 ## Later (not scheduled yet)
-- **Storm track lines / motion vectors** — parked as a real computer-vision effort (cell
-  identification + tracking across frames), not a quick slice.
 - Velocity and dual-pol products; product switcher
 - MRMS national composite at low zoom (wide-area context — the *right* way to use
   multiple radars; see ADR-0005)

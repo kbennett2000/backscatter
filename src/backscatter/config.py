@@ -39,6 +39,10 @@ DEFAULT_PRUNE_INTERVAL_S = 3600.0
 # Near-real-time live frame from the chunks bucket (Slice 26b). ON by default; set
 # BACKSCATTER_LIVE_CHUNKS=0/false/no to fall back to the assembled-only path exactly.
 DEFAULT_LIVE_CHUNKS = True
+# Storm-cell tracking compute (Slice 28). ON by default for collect; set
+# BACKSCATTER_TRACK_CELLS=0/false/no to skip identifying/storing cells. The map
+# overlay (28c) is a separate, off-by-default UI toggle — this only gates compute.
+DEFAULT_TRACK_CELLS = True
 _GIB = 1024**3
 
 
@@ -79,6 +83,7 @@ class Config:
     retention_max_size_bytes: int | None = None
     prune_interval_s: float = DEFAULT_PRUNE_INTERVAL_S
     live_chunks: bool = DEFAULT_LIVE_CHUNKS  # near-real-time live frame (26b)
+    track_cells: bool = DEFAULT_TRACK_CELLS  # storm-cell tracking compute (28)
 
     @property
     def retention_active(self) -> bool:
@@ -155,6 +160,7 @@ def load_config(
             None, os.environ.get("BACKSCATTER_PRUNE_INTERVAL"), DEFAULT_PRUNE_INTERVAL_S
         ),
         live_chunks=_live_chunks(os.environ.get("BACKSCATTER_LIVE_CHUNKS")),
+        track_cells=_track_cells(os.environ.get("BACKSCATTER_TRACK_CELLS")),
     )
 
 
@@ -162,6 +168,13 @@ def _live_chunks(env: str | None) -> bool:
     """Live-chunks toggle: unset → on; ``0``/``false``/``no`` (any case) → off."""
     if env is None or env == "":
         return DEFAULT_LIVE_CHUNKS
+    return env.strip().lower() not in ("0", "false", "no")
+
+
+def _track_cells(env: str | None) -> bool:
+    """Storm-cell tracking toggle: unset → on; ``0``/``false``/``no`` → off."""
+    if env is None or env == "":
+        return DEFAULT_TRACK_CELLS
     return env.strip().lower() not in ("0", "false", "no")
 
 

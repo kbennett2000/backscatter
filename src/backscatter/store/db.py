@@ -11,6 +11,10 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from backscatter.track.detect import Cell
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS volumes (
@@ -34,6 +38,23 @@ CREATE TABLE IF NOT EXISTS volumes (
     source        TEXT    NOT NULL DEFAULT 'assembled',  -- assembled|live (26b)
     UNIQUE(site, scan_time)
 );
+
+-- Storm cells per frame (Slice 28). One row per identified cell, keyed to a
+-- volume's (site, scan_time). track_id/u_ms/v_ms are filled by cross-frame
+-- association (Slice 28b) and stay NULL for identification-only (28a) rows.
+CREATE TABLE IF NOT EXISTS cells (
+    id            INTEGER PRIMARY KEY,
+    site          TEXT    NOT NULL,
+    scan_time     TEXT    NOT NULL,   -- ISO-8601 UTC, matches volumes.scan_time
+    centroid_lon  REAL    NOT NULL,
+    centroid_lat  REAL    NOT NULL,
+    max_dbz       REAL    NOT NULL,
+    area_km2      REAL    NOT NULL,
+    track_id      INTEGER,            -- persistent cell id (28b); NULL until associated
+    u_ms          REAL,               -- eastward motion, m/s (28b)
+    v_ms          REAL                -- northward motion, m/s (28b)
+);
+CREATE INDEX IF NOT EXISTS idx_cells_frame ON cells(site, scan_time);
 """
 
 # Render columns, added to `volumes` after the base table. Old dev DBs created
@@ -231,6 +252,43 @@ def record_render(
     conn.commit()
 
 
+def record_cells(
+    conn: sqlite3.Connection,
+    *,
+    site: str,
+    scan_time: datetime,
+    cells: list[Cell],
+) -> None:
+    """Replace the stored storm cells for one frame (Slice 28a).
+
+    Cells are keyed to a frame's ``(site, scan_time)``; this deletes any existing rows
+    for that frame first so a re-render (or a live→assembled reconcile that re-detects)
+    is idempotent rather than additive. ``track_id``/``u_ms``/``v_ms`` are left NULL —
+    cross-frame association fills them in Slice 28b.
+    """
+    conn.execute(
+        "DELETE FROM cells WHERE site = ? AND scan_time = ?",
+        (site, scan_time.isoformat()),
+    )
+    conn.executemany(
+        "INSERT INTO cells "
+        "(site, scan_time, centroid_lon, centroid_lat, max_dbz, area_km2) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            (
+                site,
+                scan_time.isoformat(),
+                c.centroid_lon,
+                c.centroid_lat,
+                c.max_dbz,
+                c.area_km2,
+            )
+            for c in cells
+        ],
+    )
+    conn.commit()
+
+
 def mark_render_failed(
     conn: sqlite3.Connection, site: str, scan_time: datetime
 ) -> None:
@@ -349,6 +407,11 @@ def delete_frame(conn: sqlite3.Connection, *, site: str, scan_time: str) -> None
     datetime — retention works off rows it already holds."""
     conn.execute(
         "DELETE FROM volumes WHERE site = ? AND scan_time = ?", (site, scan_time)
+    )
+    # Storm cells (Slice 28) are keyed to the same frame; drop them with it so a
+    # pruned frame leaves no orphan cell rows.
+    conn.execute(
+        "DELETE FROM cells WHERE site = ? AND scan_time = ?", (site, scan_time)
     )
     conn.commit()
 

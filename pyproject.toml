@@ -10,6 +10,7 @@ dependencies = [
     "boto3",
     "arm-pyart",
     "numpy",
+    "scipy",  # connected-components for storm-cell ID (Slice 28); already present via pyart
     "fastapi",
     "pyproj",
     "pillow",
@@ -59,7 +60,7 @@ packages = ["backscatter"]
 mypy_path = "src"
 strict = true
 
-# boto3/botocore/moto/pyart ship no type information and we don't depend on stubs.
+# boto3/botocore/moto/pyart/scipy ship no type information and we don't depend on stubs.
 [[tool.mypy.overrides]]
-module = ["boto3.*", "botocore.*", "moto.*", "pyart.*"]
+module = ["boto3.*", "botocore.*", "moto.*", "pyart.*", "scipy.*"]
 ignore_missing_imports = true
