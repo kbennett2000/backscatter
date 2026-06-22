@@ -8,7 +8,7 @@
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green.svg"></a>
   <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-blue.svg">
   <img alt="Docker: compose up" src="https://img.shields.io/badge/docker-compose%20up-2496ED?logo=docker&logoColor=white">
-  <img alt="Status: early / WIP" src="https://img.shields.io/badge/status-early%2FWIP-orange.svg">
+  <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-LAN--first-success.svg">
 </p>
 
 backscatter pulls free NEXRAD Level 2 radar from NOAA's public archive, renders it on a
@@ -42,7 +42,8 @@ Scrub and replay every frame it has collected — a DVR for the sky:
 > walks you from zero to a running app with step-by-step guides for Windows, macOS, and
 > Linux — no technical experience needed.
 
-> **Status:** early / work in progress. Built as a personal project.
+> **Heads up:** a personal/hobby project, not an official or life-safety tool — see
+> [Not for life-safety](#not-for-life-safety) below.
 
 ## Why
 Good radar apps are subscription-priced and cap how far back you can replay. The
@@ -50,14 +51,29 @@ underlying data is public and free. backscatter is a LAN-hosted alternative that
 costs nothing to feed — no API keys, no paid data, no credit card — and builds a
 long-running archive so playback isn't limited to recent data.
 
-## Planned features
-- Continuous collection of NEXRAD Level 2 volumes, automatic nearest-radar
-  selection for any CONUS location
-- Lowest-tilt reflectivity at native super-resolution, rendered on a MapLibre map
-  (velocity / dual-pol products later)
-- Unlimited timeline scrubbing / playback over the collected archive
-- Failover to the next-nearest radar when the primary is offline
-- Runs as a self-hosted service on a home server
+## What it does
+- **Collects continuously and keeps everything.** Pulls NEXRAD Level 2 volumes on a
+  loop and never throws frames away, so you can scrub back across a whole storm — or a
+  whole season — not just the last hour.
+- **Works for any CONUS location.** Give it a lat/lon; it picks the nearest covering
+  radar automatically, and fails over to the next-nearest if one goes offline.
+- **Highest resolution for a point.** Lowest-tilt reflectivity at native
+  super-resolution (0.5° × 250 m), rendered on a MapLibre map.
+- **Near-real-time.** A live frame assembled from the chunks feed lands ~1–2 minutes
+  behind the radar (RadarScope-class), not the ~5–10 min of the assembled archive.
+- **A DVR for the sky.** Timeline scrubber + play/pause over the whole archive, with
+  honest gap markers where collection was down.
+- **Multiple places, switchable in the app.** Add/edit/delete locations in the UI; the
+  map flies between them.
+- **Comfortable to look at.** Light/dark themes, mobile-friendly layout, an opacity
+  slider, switchable keyless basemaps, and color palettes (NWS classic / RadarScope)
+  with an optional clear-air hide.
+- **Storm-cell tracking overlay.** Optional dots + estimated-motion vectors — clearly
+  labeled *estimated motion, not a nowcast* (see [Not for life-safety](#not-for-life-safety)).
+- **Self-hosted, free, yours.** Runs on a home server with a configurable retention
+  policy. No accounts, no API keys, no paid data.
+
+Velocity and dual-pol products are on the [roadmap](docs/ROADMAP.md), not built yet.
 
 ## Data
 Radar data comes from the NOAA Open Data Dissemination program's public S3 buckets
@@ -113,7 +129,8 @@ manylinux wheels; it's a chunky image (~the scientific stack) but builds with no
 build tools.
 
 ## Quickstart (without Docker)
-Early build — a few commands work end to end:
+Prefer to run it straight from a checkout (for development, or to poke at the CLI)? The
+same pipeline runs end to end without Docker:
 
 ```
 uv run backscatter pull              # fetch the latest volume for the configured site
@@ -139,12 +156,14 @@ running `collect` picks up location changes within a cycle — no restart. Run
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for build status.
 
 ### Retention
-The archive is bounded by a configurable retention policy (see ADR-0009) so it
-doesn't grow without limit. Two independent limits, both managed via env:
-- **Age limit** — delete frames older than N days. **Default 30 days, ON.** Set
-  `BACKSCATTER_RETENTION_DAYS=0` to disable.
+The archive is bounded by a configurable retention policy (see ADR-0009, ADR-0013) so
+it doesn't grow without limit. Two independent limits, edited live in the UI under
+**Settings → Archive retention** (the `.env` values only *seed* the policy on the
+first run — after that the DB is the source of truth, like locations):
+- **Age limit** — delete frames older than N days. **Default 30 days, ON.** Set it to
+  `0` (or seed `BACKSCATTER_RETENTION_DAYS=0`) to disable.
 - **Size cap** — delete oldest-first once the archive exceeds N GB. **Default
-  off/unlimited** (opt-in, no surprise deletion); set `BACKSCATTER_RETENTION_MAX_GB`.
+  off/unlimited** (opt-in, no surprise deletion); seed `BACKSCATTER_RETENTION_MAX_GB`.
 
 Both can be active at once — a frame is pruned if it violates *either*. A running
 `backscatter collect` prunes automatically (throttled to once per

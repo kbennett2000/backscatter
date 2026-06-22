@@ -101,9 +101,28 @@ def _hold(ms: int) -> Callable[[Page], None]:
 
 
 def _goto_frame(i: int) -> Callable[[Page], None]:
+    """Jump to frame ``i`` and wait for its radar image to actually paint.
+
+    The radar layer updates via an async ``updateImage`` (a fetch + decode), so the old
+    fixed 70 ms wait routinely screenshotted a half-loaded or blank map — that put the
+    "missing radar" frames in the GIFs. We instead register for the map's next ``idle``
+    (which fires once the new image has loaded and repainted), trigger the jump, and
+    resolve on that idle — capped by a safety timeout — then add a short settle.
+    """
     def step(pg: Page) -> None:
-        pg.evaluate(f"(function(){{ if(typeof goTo==='function') goTo({i}); }})()")
-        pg.wait_for_timeout(70)
+        pg.evaluate(
+            """(i) => new Promise((resolve) => {
+                if (typeof goTo !== 'function') return resolve();
+                const m = state.map;
+                let settled = false;
+                const done = () => { if (!settled) { settled = true; resolve(); } };
+                m.once('idle', done);   // the idle after the image reload + repaint
+                goTo(i);                // triggers the radar updateImage
+                setTimeout(done, 2500); // safety cap if no further render happens
+            })""",
+            i,
+        )
+        pg.wait_for_timeout(120)
     return step
 
 
@@ -166,11 +185,23 @@ def capture(url: str, out: Path) -> None:
             _ready(pg)
             return pg
 
-        # playback: loop the most recent ~16 frames smoothly
+        # playback: loop the most recent ~16 frames smoothly. Keep the window to a
+        # single contiguous run (don't start it mid-gap) so the loop reads as continuous
+        # motion, not a time-jump.
         pg = fresh()
-        n = pg.evaluate("state.frames.length")
-        start = max(0, n - 16)
-        _record(pg, [_goto_frame(i) for i in range(start, n)],
+        win = pg.evaluate(
+            """() => {
+                const n = state.frames.length;
+                const gaps = (state.gaps || []).map(g => g.afterIndex);
+                let lo = 0;
+                for (const gi of gaps) { if (gi < n - 1) lo = Math.max(lo, gi + 1); }
+                let start = Math.max(lo, n - 16);
+                if (n - start < 8) start = Math.max(0, n - 16); // enough for a loop
+                return [start, n];
+            }"""
+        )
+        start, end = int(win[0]), int(win[1])
+        _record(pg, [_goto_frame(i) for i in range(start, end)],
                 out / "playback.gif", fps=8, width=960)
         pg.context.close()
 

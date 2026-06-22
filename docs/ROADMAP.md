@@ -358,12 +358,19 @@ clear-air hide + palette toggle — were split out to Slice 24, see below.)
   OpenFreeMap); chrome derived from the style; ☀/☾ kept as a shortcut; old theme pref
   migrated. No satellite/terrain (none keyless). theme.js generalized to a `STYLES` registry.
 
-## Slice 24 — Client-side recolor: clear-air hide + palette toggle (queued)
-Approved/queued. The radar palette is 15 discrete buckets, so the colored PNG is losslessly
-invertible to a bucket index — both features can be done **client-side, no re-render, no
-backend**, by recoloring the source PNG in a canvas (RGB→bucket→drop-low-buckets for
-clear-air / remap-to-other-ramp for a RadarScope-style palette). Shared canvas-LUT pipeline +
-a visual-correctness pass; its own slice rather than bloating Slice 23.
+## Slice 24 — Client-side recolor: clear-air hide + palette toggle (DONE — 24a/24b/24c)
+The radar palette is 15 discrete buckets, so the colored PNG is losslessly invertible to a
+bucket index — both features are done **client-side, no re-render, no backend**, by recoloring
+the source PNG in a canvas (RGB→bucket→drop-low-buckets for clear-air / remap-to-other-ramp for
+a RadarScope-style palette). Shared canvas-LUT pipeline (`web/recolor.js`) + a visual-correctness
+pass.
+- **Slice 24a — clear-air hide (`f101c83`).** Lossless bucket inversion drops the low-dBZ
+  buckets (bugs, dust, fine-gradient clutter) so real weather stands out; off by default,
+  persisted.
+- **Slice 24b — palette toggle (`700d1e1`).** `Palette` selector swaps NWS classic ↔
+  RadarScope-style ramp, same data, client-side remap.
+- **Slice 24c — coverage-framed initial view (`02bb064`).** Open framed on the active
+  location's radar coverage instead of a fixed wide zoom.
 
 ## Slice 25 — Freshness UX + tighter polling (the cheap lag fixes)
 From a lag investigation: vs RadarScope we're ~5–10 min behind, but that's ~90% the
@@ -408,7 +415,7 @@ frame 0.6 min old while the freshest assembled volume was 6.0 min old.
   + frontend unchanged (the live frame surfaces through the existing UI; the freshness cue just
   reads a much smaller age).
 
-## Intra-volume SAILS cuts (27a DONE, 27b built — pending live visual check) — ADR-0012
+## Intra-volume SAILS cuts (27a + 27b DONE) — ADR-0012
 One frame per volume left backscatter ~5 min stale *between* volumes during precip, while
 RadarScope showed the mid-volume SAILS cuts. Confirmed live: backscatter correctly served its
 newest live frame, but that frame was the volume's base cut; a fresher SAILS cut was decoded and
@@ -424,15 +431,14 @@ dropped. Surface **every** 0.5° surveillance cut (base + SAILS/MRLE) as its own
   (`tests/fixtures/sails_KFTG_layout.npz`) + synthetic split-cut/SAILS layouts — selection
   `[0, 9]`, Doppler twins excluded, times `00:24:20` / `00:26:44`, base == volume start. Real-bytes
   spot-check confirmed 2 distinct cuts (71 dBZ apart) and the freeze progression.
-- **Slice 27b — live wiring (built; pending the live visual check before merge).** `chunks.
-  ride_volume` rides one active volume dir, accumulates its chunks across polls, and surfaces each
-  newly-frozen cut; the collect loop indexes the base as `source='live'` (reconciles as today) and
-  each SAILS cut as `source='live-sails'`, permanent (no assembled object at their timestamp;
-  reconcile's `WHERE source='live'` skips them). No schema migration. Hermetic tests cover the
-  dual-source wiring + reconcile-skip; **merge gated on a RadarScope visual check on a live SAILS
-  event** (per CLAUDE.md — a rendering change doesn't merge on "it produced frames").
+- **Slice 27b — live wiring (done, `d679ca6`).** `chunks.ride_volume` rides one active volume
+  dir, accumulates its chunks across polls, and surfaces each newly-frozen cut; the collect loop
+  indexes the base as `source='live'` (reconciles as today) and each SAILS cut as
+  `source='live-sails'`, permanent (no assembled object at their timestamp; reconcile's
+  `WHERE source='live'` skips them). No schema migration. Hermetic tests cover the dual-source
+  wiring + reconcile-skip.
 
-## Storm cell tracking (28a–28e DONE — pending operator's RadarScope visual check)
+## Storm cell tracking (28a–28f DONE) — ADR-0012
 RadarScope-style storm tracks. Library survey (TINT/tintX/tobac/Py-ART) concluded none fit
 our streaming, polar-sweep, small-image loop cleanly — each is batch-shaped, wants a grid type
 we don't hold, and is either fragile (TINT: alpha, git-only) or heavy (tintX pins `numpy<2.0`;
@@ -475,9 +481,9 @@ Tracking is *estimation*, framed in-UI as estimated motion, never a nowcast (not
   `Storm tracks` checkbox in `#displaysettings` (localStorage `backscatter.stormtracks`), re-added
   on basemap `setStyle` like radar/pins, refreshed on `goTo` with a per-fetch stale-guard so
   scrubbing never flickers a wrong frame. In-UI disclaimer "Estimated cell motion — not a nowcast,
-  not for life safety". **The mandatory visual-vs-RadarScope check happens on deploy (operator's
-  phone)** — markers on the right cells, vectors pointing the right way at sensible length, sane
-  while scrubbing. Tests: `tests/test_api.py` (endpoint returns the frame's cells, projection for a
+  not for life safety". The on-deploy RadarScope comparison (operator's phone — markers on the
+  right cells, vectors pointing the right way at sensible length, sane while scrubbing) drove the
+  28f vector-drawing gates. Tests: `tests/test_api.py` (endpoint returns the frame's cells, projection for a
   mover / None for a stationary cell, 400 on bad timestamp) + `web/stormtracks.test.js`.
 - **Slice 28d — RadarScope-style time-tick cross-lines + arrowhead (done).** Frontend-only polish
   on the 28c overlay; **no backend/algorithm change** (`/api/cells` already returns each cell's
@@ -492,8 +498,8 @@ Tracking is *estimation*, framed in-UI as estimated motion, never a nowcast (not
   stationary cells stay marker-only. Tunable consts (`TICK_INTERVAL_MIN`/`TICK_COUNT`/
   `TICK_HALF_LEN_M`/arrow). Note: the renderer now recomputes the vector from speed+bearing (server's
   geodesic `proj_*` retained in the API but unused for drawing). Honesty unchanged (estimated,
-  steady-motion, not a nowcast). 50 node tests. **Operator's on-phone RadarScope tick comparison
-  still pending.**
+  steady-motion, not a nowcast). 50 node tests. (The on-phone RadarScope tick comparison fed
+  back into the 28f horizon/gating fixes.)
 - **Slice 28e — track grace period / coast (done).** Fixes flicker-and-restart: a cell that briefly
   dips under the 40 dBZ / 10 km² detection floor used to end its track and restart under a new
   `track_id` (detection is a hard, memoryless per-frame gate; association had no grace). Now a track
@@ -509,14 +515,30 @@ Tracking is *estimation*, framed in-UI as estimated motion, never a nowcast (not
   a new id; `active_tracks_for_coast` window/latest-per-track/K-bound. End-to-end smoke: present→
   present→absent→present resumes the same id. ruff/mypy clean, 239 pytest + 50 node. Honesty
   unchanged (estimated, steady-velocity; K small so it never coasts across real dissipation).
-  **Operator's on-phone confirmation pending** (a floor-riding cell should keep its vector through a
-  one/two-frame dip instead of resetting).
+- **Slice 28f — vector-drawing gates + horizon fix (done, `d88b217`, `6dcae6b`).** Frontend
+  polish from the on-deploy comparison: draw the backend's true **30-min** projection horizon
+  (not 60), enforce a real speed ceiling, and require an N-frame track history before drawing a
+  vector — so a just-detected or noisy cell shows a marker but no premature/overlong arrow.
+
+## Slice 29 — Runtime-editable retention (DONE — 29a/29b) — ADR-0013
+Retention was immutable env config (read once into a frozen `Config`); changing a limit meant
+editing `.env` **and** recreating the container, and the `serve`/`collect` split meant an
+in-memory change in one process never reached the other. Moved to the same shape as locations
+(ADR-0008): DB-backed runtime state, env seeds an empty store on first run.
+- **Slice 29a — DB-backed policy + API (`4454241`, ADR-0013).** Retention lives in the SQLite
+  `settings` table; `GET`/`PUT /api/retention` read/write it; the prune loop reads the live
+  policy each pass instead of a startup snapshot. Env seeds first run only.
+- **Slice 29b — Settings-menu form (`8cd67f2`).** `Archive retention` form in the ⚙ panel
+  (`web/retention.js`) edits days + GB live; applies on the next cleanup pass, no restart.
+
+## Maintenance
+- **Asset cache revalidation (`1b4fbdf`).** `serve` revalidates frontend assets so a deploy is
+  never masked by a stale browser cache (the index/static bundle re-checks; immutable renders
+  stay long-cached).
 
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher
 - MRMS national composite at low zoom (wide-area context — the *right* way to use
   multiple radars; see ADR-0005)
-- Selectable color palettes
 - Higher-fidelity client-side / WebGL radial-sweep rendering (the "real RadarScope
   look")
-- Retention / archive-management tooling

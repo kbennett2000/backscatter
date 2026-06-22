@@ -23,8 +23,15 @@ which is usually easier:
 
 ## Adding and managing locations (in the app)
 
-Click the **⚙ Locations** button at the top of the page. A panel opens where you can add,
-edit, rename, delete, and choose your default location:
+Click the **⚙** button at the top of the page. A panel slides open — this is your
+settings panel. The top is **Locations** (add, edit, rename, delete, and choose your
+default); scroll down and you'll also find **Display** settings (map style, colors —
+see the [tour](using.md#make-it-look-the-way-you-like-the-button)) and **Archive
+retention** (below).
+
+![Opening the settings panel from the ⚙ button](assets/manage-locations.gif)
+
+Here's the panel with the list of places and the add form:
 
 ![The Locations panel, showing the list of places and the add form](assets/location-panel.png)
 
@@ -56,9 +63,9 @@ to. That's wonderful for replaying storms, but radar adds up, so backscatter can
 after itself automatically. This is called **retention**.
 
 There are two simple dials. The easiest way to set them is **in the app**: open the ⚙
-**Locations** panel and find **Archive retention** — enter a number of days and/or a size
-in GB (leave a box blank to turn that limit off), then **Save**. Changes apply on the next
-cleanup pass, no restart needed.
+panel, scroll to **Archive retention** — enter a number of days and/or a size in GB
+(leave a box blank to turn that limit off), then **Save retention**. Changes apply on the
+next cleanup pass, no restart needed.
 
 | Dial | What it does | Default |
 | --- | --- | --- |
@@ -99,7 +106,7 @@ inside the app and for the address you open — there's nothing else to change.
 A few more optional dials, all explained with comments inside the file:
 
 - `BACKSCATTER_PORT` — the web address port (default `8085`; see above).
-- `BACKSCATTER_POLL_INTERVAL` — how often it checks for new radar (default 60 seconds;
+- `BACKSCATTER_POLL_INTERVAL` — how often it checks for new radar (default 30 seconds;
   you rarely need to change this).
 - `PUID` / `PGID` — Linux file-ownership (see the [Linux guide](get-started/linux.md)).
 

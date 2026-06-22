@@ -34,6 +34,29 @@ mean specific rain intensities (above), not decoration.
 
 ![backscatter in dark mode](assets/app-overview-dark.png)
 
+## Make it look the way you like (the ⚙ button)
+
+Click the **⚙** button in the top bar to open the settings panel. Near the bottom,
+under **Display settings**, are a few knobs that change how things look — none of them
+change the radar data, just how it's drawn:
+
+- **Map style** — pick a different background map (plain, bright, dark, and more). All
+  free, no account needed. Handy if the radar is hard to see over a busy map.
+- **Radar opacity** — slide to make the radar more see-through, so you can read the
+  town names and roads underneath, or more solid so the weather pops.
+- **Palette** — choose the **colors** used for rain intensity:
+    - **NWS classic** — the familiar green-to-red scheme the U.S. National Weather
+      Service uses.
+    - **RadarScope** — the look you may know from the popular RadarScope app.
+
+    It's purely the coloring — the same data either way, just a different paint job.
+    Pick whichever you find easier to read.
+- **Hide clear-air** — radar is so sensitive it also picks up bugs, dust, and the air
+  itself on calm days, showing up as a faint speckly haze when there's no real weather.
+  Tick this box to hide those very-light returns so actual rain and storms stand out.
+
+Your choices are remembered for next time.
+
 ## The readout (top-left)
 
 The little panel in the top-left tells you exactly what you're looking at:
@@ -80,6 +103,23 @@ If you've added more than one place, a **location** dropdown appears at the top.
 different one and the map flies there and shows that town's radar:
 
 ![Choosing a different location; the map re-centers on the new town's radar](assets/switch-location.gif)
+
+## Storm tracks (optional)
+
+backscatter can spot individual storm cells and draw a little **dot** on each one with
+an **arrow** showing which way it looks to be heading and how fast. Turn it on under the
+**⚙** button → **Display settings** → **Storm tracks**. (It's off to start with, so the
+map stays uncluttered until you want it.)
+
+The arrow length and the tick marks along it show roughly how far the storm might travel
+over the next half-hour — longer arrow, faster storm.
+
+!!! warning "It's an educated guess — not a forecast"
+    Storm tracks are **estimated** from how the storm has been moving, assuming it keeps
+    going the same way. Real storms turn, grow, and fade. This is **not a nowcast, not
+    an official forecast, and not for any safety decision**. For warnings and what-to-do
+    guidance, always rely on the [National Weather Service](https://www.weather.gov) and
+    NOAA Weather Radio. (See also [Not for life-safety](index.md).)
 
 ## Gap markers — "no data here"
 
