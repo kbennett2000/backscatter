@@ -55,6 +55,7 @@ const opacityInput = $("opacity");
 const basemapSelect = $("basemap");
 const tracksToggle = $("tracks");
 const clearAirToggle = $("clearair");
+const paletteSelect = $("palette");
 const locpanel = $("locpanel");
 const loclist = $("loclist");
 const locform = $("locform");
@@ -1102,6 +1103,17 @@ function wireControls() {
     state.clearAir = clearAirToggle.checked;
     try {
       localStorage.setItem(LS_CLEARAIR, state.clearAir ? "true" : "false");
+    } catch (e) {
+      /* storage disabled — applies for this session */
+    }
+    applyRecolorChange();
+  });
+  // Reflectivity palette: NWS classic (default) ↔ RadarScope-style; persist + re-show.
+  paletteSelect.value = state.palette;
+  paletteSelect.addEventListener("change", () => {
+    state.palette = paletteSelect.value;
+    try {
+      localStorage.setItem(LS_PALETTE, state.palette);
     } catch (e) {
       /* storage disabled — applies for this session */
     }
