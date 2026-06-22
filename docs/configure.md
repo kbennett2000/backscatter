@@ -55,35 +55,30 @@ backscatter saves **every** radar picture it collects, forever — unless you te
 to. That's wonderful for replaying storms, but radar adds up, so backscatter can tidy up
 after itself automatically. This is called **retention**.
 
-There are two simple dials, both in your `.env` file:
+There are two simple dials. The easiest way to set them is **in the app**: open the ⚙
+**Locations** panel and find **Archive retention** — enter a number of days and/or a size
+in GB (leave a box blank to turn that limit off), then **Save**. Changes apply on the next
+cleanup pass, no restart needed.
 
-| Setting | What it does | Default |
+| Dial | What it does | Default |
 | --- | --- | --- |
-| `BACKSCATTER_RETENTION_DAYS` | Delete radar older than this many days. | **30 days** |
-| `BACKSCATTER_RETENTION_MAX_GB` | Also delete the oldest radar once your archive passes this size (in gigabytes). | **Off** (no size limit) |
+| Keep frames for (days) | Delete radar older than this many days. | **30 days** |
+| Max archive size (GB) | Also delete the oldest radar once your archive passes this size. | **Off** (no size limit) |
 
 So out of the box, backscatter keeps the **last 30 days** and quietly removes anything
-older. To keep more (or less), change the number:
+older. Set a box to blank (or `0` days) to turn that limit off; leave **both** blank to
+keep **everything forever** (your disk will fill eventually).
 
-```
-BACKSCATTER_RETENTION_DAYS=90
-```
-
-To keep **everything forever**, set it to `0`:
-
-```
-BACKSCATTER_RETENTION_DAYS=0
-```
+!!! note "The `.env` values just seed the first run"
+    `BACKSCATTER_RETENTION_DAYS` and `BACKSCATTER_RETENTION_MAX_GB` in `.env` set the
+    **starting** policy on a brand-new archive. After that the app's setting is the source
+    of truth — edit it under **Archive retention**, not `.env` (just like locations). This
+    is [ADR-0013](dev/decisions.md).
 
 !!! warning "Deleting is permanent"
     When retention removes old radar, it's gone for good (you could always re-download it
     later with a backfill, but it's not in a recycle bin). The 30-day default is a safe,
     sensible starting point — raise it whenever you like.
-
-!!! note "After editing `.env`"
-    Changes to `.env` take effect next time you start backscatter. Run
-    `docker compose up -d` in the project folder to apply them. (Location changes you make
-    *in the app* apply right away — no restart needed.)
 
 ## Changing the port
 

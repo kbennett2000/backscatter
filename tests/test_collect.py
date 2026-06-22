@@ -438,7 +438,9 @@ def _prune_spy(
     """Replace run_prune in the loop with a spy recording the ``now`` it saw."""
     seen: list[datetime] = []
 
-    def spy(conn: object, config: Config, *, now: datetime, dry_run: bool) -> None:
+    def spy(
+        conn: object, config: Config, policy: object, *, now: datetime, dry_run: bool
+    ) -> None:
         seen.append(now)
 
     monkeypatch.setattr("backscatter.collect.collect.run_prune", spy)

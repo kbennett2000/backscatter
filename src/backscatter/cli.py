@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from backscatter import __version__
-from backscatter.config import Config, load_config
+from backscatter.config import load_config
 
 if TYPE_CHECKING:
     from backscatter.prune.prune import PruneReport
@@ -24,6 +24,8 @@ from backscatter.render.render import render_volume
 from backscatter.sites.resolve import resolve_target_site
 from backscatter.sites.select import rank_sites
 from backscatter.store import locations as locations_store
+from backscatter.store import settings
+from backscatter.store.settings import RetentionPolicy
 
 # How many ranked sites the `site` command prints.
 _SITE_LIST_LEN = 5
@@ -312,12 +314,12 @@ def _cmd_collect(args: argparse.Namespace) -> int:
     return 0
 
 
-def _policy_line(config: Config) -> str:
+def _policy_line(policy: RetentionPolicy) -> str:
     """One-line summary of the active retention policy."""
     from backscatter.prune.prune import human_bytes
 
-    days = config.retention_max_age_days
-    size = config.retention_max_size_bytes
+    days = policy.max_age_days
+    size = policy.max_size_bytes
     age = f"{days:g} days" if days is not None else "off"
     cap = human_bytes(size) if size is not None else "unlimited"
     return f"Retention policy: age limit {age}, size cap {cap}"
@@ -344,16 +346,18 @@ def _cmd_prune(args: argparse.Namespace) -> int:
     from backscatter.prune.prune import human_bytes, run_prune
 
     config = load_config()
-    print(_policy_line(config))
-    if not config.retention_active:
-        print("No retention limits configured — nothing to prune.")
-        return 0
-
+    # Retention is DB-backed runtime state (ADR-0013); read the live policy, not env.
     conn = locations_store.connect_bootstrapped(config)
     try:
+        policy = settings.get_retention(conn)
+        print(_policy_line(policy))
+        if not policy.active:
+            print("No retention limits configured — nothing to prune.")
+            return 0
+
         now = datetime.now(UTC)
         # Preview first — the same selection a live prune would make.
-        preview = run_prune(conn, config, now=now, dry_run=True)
+        preview = run_prune(conn, config, policy, now=now, dry_run=True)
         _print_prune_report(preview, planned=True)
         if args.dry_run or preview.deleted == 0:
             return 0
@@ -367,7 +371,7 @@ def _cmd_prune(args: argparse.Namespace) -> int:
                 print("Aborted — nothing deleted.")
                 return 0
 
-        result = run_prune(conn, config, now=now, dry_run=False)
+        result = run_prune(conn, config, policy, now=now, dry_run=False)
         _print_prune_report(result, planned=False)
         if result.skipped:
             print(
@@ -417,11 +421,12 @@ def _cmd_backfill(args: argparse.Namespace) -> int:
             f"{plan.to_fetch} to fetch (~{human_bytes(plan.bytes_estimate)})."
         )
         if plan.older_than_retention and plan.retention_cutoff is not None:
+            days = settings.get_retention(conn).max_age_days
             print(
                 f"  WARNING: {plan.older_than_retention} volume(s) predate your "
-                f"{config.retention_max_age_days:g}-day retention window (older than "
+                f"{days:g}-day retention window (older than "
                 f"{plan.retention_cutoff:%Y-%m-%d}); they'll be pruned on the next "
-                "prune pass. Raise BACKSCATTER_RETENTION_DAYS or set it to 0 to keep."
+                "prune pass. Raise the age limit in Settings (or turn it off) to keep."
             )
         if args.dry_run or plan.to_fetch == 0:
             return 0

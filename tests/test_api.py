@@ -22,6 +22,7 @@ from backscatter.jobs.manager import BackfillJob, JobConflict, JobManager, JobSt
 from backscatter.prune.prune import run_prune
 from backscatter.render.render import RenderResult
 from backscatter.store import db
+from backscatter.store.settings import RetentionPolicy
 
 BOUNDS = (-107.23, 37.71, -101.86, 41.86)  # west, south, east, north
 
@@ -295,7 +296,11 @@ def test_pruned_frame_leaves_timeline_cleanly(tmp_path: Path) -> None:
 
     conn = db.connect(config.db_path)
     db.init_db(conn)
-    run_prune(conn, config, now=datetime(2026, 6, 20, 22, 0, tzinfo=UTC), dry_run=False)
+    policy = RetentionPolicy(
+        config.retention_max_age_days, config.retention_max_size_bytes
+    )
+    now = datetime(2026, 6, 20, 22, 0, tzinfo=UTC)
+    run_prune(conn, config, policy, now=now, dry_run=False)
     conn.close()
 
     client = TestClient(create_app(config))
@@ -639,3 +644,49 @@ def test_backfill_current_empty_when_none(tmp_path: Path) -> None:
     client = TestClient(create_app(_config(tmp_path)))
     resp = client.get("/api/backfill")
     assert resp.status_code == 200 and resp.json() == {}
+
+
+# --- retention settings (Slice 29 / ADR-0013) --------------------------------
+
+
+def test_retention_get_returns_seeded_defaults(tmp_path: Path) -> None:
+    client = TestClient(create_app(_config(tmp_path)))
+    body = client.get("/api/retention").json()
+    assert body["max_age_days"] == 30.0  # env default, seeded on bootstrap
+    assert body["max_size_gb"] is None
+
+
+def test_retention_put_round_trips(tmp_path: Path) -> None:
+    client = TestClient(create_app(_config(tmp_path)))
+    resp = client.put("/api/retention", json={"max_age_days": 7, "max_size_gb": 50})
+    assert resp.status_code == 200
+    assert resp.json() == {"max_age_days": 7.0, "max_size_gb": 50.0}
+    # persisted: a fresh GET reflects it
+    assert client.get("/api/retention").json() == {
+        "max_age_days": 7.0,
+        "max_size_gb": 50.0,
+    }
+
+
+def test_retention_put_both_off_allowed(tmp_path: Path) -> None:
+    client = TestClient(create_app(_config(tmp_path)))
+    resp = client.put(
+        "/api/retention", json={"max_age_days": None, "max_size_gb": None}
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"max_age_days": None, "max_size_gb": None}
+
+
+def test_retention_put_zero_age_disables(tmp_path: Path) -> None:
+    client = TestClient(create_app(_config(tmp_path)))
+    resp = client.put("/api/retention", json={"max_age_days": 0, "max_size_gb": None})
+    assert resp.status_code == 200
+    assert resp.json()["max_age_days"] is None  # 0 → off
+
+
+def test_retention_put_rejects_bad_input(tmp_path: Path) -> None:
+    client = TestClient(create_app(_config(tmp_path)))
+    bad_age = client.put("/api/retention", json={"max_age_days": -1})
+    assert bad_age.status_code == 400 and "max_age_days" in bad_age.json()["detail"]
+    bad_gb = client.put("/api/retention", json={"max_size_gb": 0})
+    assert bad_gb.status_code == 400 and "max_size_gb" in bad_gb.json()["detail"]

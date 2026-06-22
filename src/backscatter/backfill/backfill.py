@@ -24,7 +24,7 @@ from backscatter.ingest import naming, pull, s3
 from backscatter.ingest.pull import PullStatus
 from backscatter.ingest.s3 import S3Client
 from backscatter.render.render import render_volume
-from backscatter.store import db
+from backscatter.store import db, settings
 
 log = logging.getLogger("backscatter.backfill")
 
@@ -102,9 +102,11 @@ def plan_backfill(
 ) -> BackfillPlan:
     """List the range, dedupe against the index, and tally the worklist."""
     objects = list_range(client, site, start, end)
+    # Retention is DB-backed runtime state (ADR-0013); read the live age limit.
+    max_age_days = settings.get_retention(conn).max_age_days
     cutoff: datetime | None = None
-    if config.retention_max_age_days is not None:
-        cutoff = now - timedelta(days=config.retention_max_age_days)
+    if max_age_days is not None:
+        cutoff = now - timedelta(days=max_age_days)
 
     fetch_keys: list[str] = []
     bytes_estimate = 0

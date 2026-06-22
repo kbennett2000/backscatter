@@ -30,7 +30,7 @@ from backscatter.api.frames import (
 from backscatter.config import Config, Location
 from backscatter.jobs.manager import JobConflict, JobManager
 from backscatter.sites.resolve import resolve_target_site
-from backscatter.store import db
+from backscatter.store import db, settings
 from backscatter.store import locations as locations_store
 
 # A single click backfills the last 6 hours; the request is hard-capped at 24h so one
@@ -92,6 +92,20 @@ class LocationUpdate(BaseModel):
     lat: float | None = None
     lon: float | None = None
     default: bool | None = None
+
+
+def _retention_json(policy: settings.RetentionPolicy) -> dict[str, object]:
+    """Serialize the policy for the API (size cap in GB; None = that limit off)."""
+    return {
+        "max_age_days": policy.max_age_days,
+        "max_size_gb": settings.bytes_to_gb(policy.max_size_bytes),
+    }
+
+
+class RetentionUpdate(BaseModel):
+    # Full replace: a null (or omitted) field turns that limit off.
+    max_age_days: float | None = None
+    max_size_gb: float | None = None
 
 
 class BackfillStart(BaseModel):
@@ -191,6 +205,30 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         finally:
             conn.close()
+
+    @app.get("/api/retention")
+    def api_retention() -> dict[str, object]:
+        conn = _conn()
+        try:
+            policy = settings.get_retention(conn)
+        finally:
+            conn.close()
+        return _retention_json(policy)
+
+    @app.put("/api/retention")
+    def update_retention(body: RetentionUpdate) -> dict[str, object]:
+        conn = _conn()
+        try:
+            # GB → bytes at the boundary; conversions raise ValueError on bad input.
+            max_size_bytes = settings.gb_to_bytes(body.max_size_gb)
+            policy = settings.update_retention(
+                conn, max_age_days=body.max_age_days, max_size_bytes=max_size_bytes
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        finally:
+            conn.close()
+        return _retention_json(policy)
 
     @app.get("/api/latest")
     def api_latest(

@@ -20,9 +20,17 @@ from backscatter.prune.prune import (
     select_candidates,
 )
 from backscatter.store import db
+from backscatter.store.settings import RetentionPolicy
 
 _NOW = datetime(2026, 6, 20, 12, 0, tzinfo=UTC)
 _GIB = 1024**3
+
+
+def _policy(config: Config) -> RetentionPolicy:
+    """The policy these tests drive prune with (built from the test config)."""
+    return RetentionPolicy(
+        config.retention_max_age_days, config.retention_max_size_bytes
+    )
 
 
 def _config(
@@ -118,7 +126,7 @@ def test_age_prunes_only_old(tmp_path: Path) -> None:
     new = _seed(config, age_days=1)
 
     conn = _conn(config)
-    report = run_prune(conn, config, now=_NOW, dry_run=False)
+    report = run_prune(conn, config, _policy(config), now=_NOW, dry_run=False)
     conn.close()
 
     assert report.deleted == 1
@@ -135,7 +143,7 @@ def test_age_uses_scan_time_not_download_time(tmp_path: Path) -> None:
     old = _seed(config, age_days=40, downloaded=_NOW)
 
     conn = _conn(config)
-    report = run_prune(conn, config, now=_NOW, dry_run=False)
+    report = run_prune(conn, config, _policy(config), now=_NOW, dry_run=False)
     conn.close()
 
     assert report.deleted == 1
@@ -147,7 +155,7 @@ def test_age_disabled_keeps_everything(tmp_path: Path) -> None:
     _seed(config, age_days=400)
 
     conn = _conn(config)
-    report = run_prune(conn, config, now=_NOW, dry_run=False)
+    report = run_prune(conn, config, _policy(config), now=_NOW, dry_run=False)
     conn.close()
 
     assert report.deleted == 0
@@ -165,7 +173,7 @@ def test_size_cap_deletes_oldest_first_until_under(tmp_path: Path) -> None:
     f3 = _seed(config, age_days=1, raw_bytes=b"c" * 100)
 
     conn = _conn(config)
-    report = run_prune(conn, config, now=_NOW, dry_run=False)
+    report = run_prune(conn, config, _policy(config), now=_NOW, dry_run=False)
     conn.close()
 
     # 300 > 250 → drop the single oldest (200 <= 250); stop. No more.
@@ -183,7 +191,7 @@ def test_size_accounting_includes_render_bytes(tmp_path: Path) -> None:
     f = _seed(config, age_days=1, raw_bytes=b"x" * 10, png_bytes=b"p" * 1000)
 
     conn = _conn(config)
-    report = run_prune(conn, config, now=_NOW, dry_run=False)
+    report = run_prune(conn, config, _policy(config), now=_NOW, dry_run=False)
     conn.close()
 
     assert report.deleted == 1
@@ -199,7 +207,7 @@ def test_multi_radar_size_cap_is_global_oldest_first(tmp_path: Path) -> None:
     d3 = _seed(config, site="KFTG", age_days=1, raw_bytes=b"c" * 1000)
 
     conn = _conn(config)
-    report = run_prune(conn, config, now=_NOW, dry_run=False)
+    report = run_prune(conn, config, _policy(config), now=_NOW, dry_run=False)
     conn.close()
 
     # 3000 > 1500 → drop oldest two globally (KFTG d1, KTLX d2); keep newest (d3).
@@ -220,7 +228,7 @@ def test_both_active_size_prunes_a_young_frame(tmp_path: Path) -> None:
     _seed(config, age_days=1, raw_bytes=b"c" * 1000)
 
     conn = _conn(config)
-    report = run_prune(conn, config, now=_NOW, dry_run=False)
+    report = run_prune(conn, config, _policy(config), now=_NOW, dry_run=False)
     conn.close()
 
     assert report.deleted == 1
@@ -235,7 +243,7 @@ def test_both_active_age_prunes_under_cap(tmp_path: Path) -> None:
     new = _seed(config, age_days=1)
 
     conn = _conn(config)
-    report = run_prune(conn, config, now=_NOW, dry_run=False)
+    report = run_prune(conn, config, _policy(config), now=_NOW, dry_run=False)
     conn.close()
 
     assert report.deleted == 1
@@ -248,7 +256,7 @@ def test_reason_both_when_old_and_overflow(tmp_path: Path) -> None:
     _seed(config, age_days=40, raw_bytes=b"x" * 1000)  # old AND over the cap
 
     conn = _conn(config)
-    report = run_prune(conn, config, now=_NOW, dry_run=False)
+    report = run_prune(conn, config, _policy(config), now=_NOW, dry_run=False)
     conn.close()
 
     assert report.deleted == 1
@@ -263,7 +271,7 @@ def test_delete_removes_raw_png_sidecar_and_row(tmp_path: Path) -> None:
     f = _seed(config, age_days=40, png_bytes=b"png")
 
     conn = _conn(config)
-    run_prune(conn, config, now=_NOW, dry_run=False)
+    run_prune(conn, config, _policy(config), now=_NOW, dry_run=False)
     conn.close()
 
     assert not f["raw"].exists()
@@ -281,7 +289,7 @@ def test_dry_run_deletes_nothing_but_reports(tmp_path: Path) -> None:
     _seed(config, age_days=1, png_bytes=b"png")
 
     conn = _conn(config)
-    report = run_prune(conn, config, now=_NOW, dry_run=True)
+    report = run_prune(conn, config, _policy(config), now=_NOW, dry_run=True)
     conn.close()
 
     assert report.dry_run is True
@@ -314,7 +322,7 @@ def test_file_error_skips_frame_and_keeps_row(
     monkeypatch.setattr(Path, "unlink", flaky_unlink)
 
     conn = _conn(config)
-    report = run_prune(conn, config, now=_NOW, dry_run=False)
+    report = run_prune(conn, config, _policy(config), now=_NOW, dry_run=False)
     conn.close()
 
     assert report.deleted == 1
@@ -334,7 +342,7 @@ def test_self_heals_already_missing_files(tmp_path: Path) -> None:
     f["png"].unlink()
 
     conn = _conn(config)
-    report = run_prune(conn, config, now=_NOW, dry_run=False)
+    report = run_prune(conn, config, _policy(config), now=_NOW, dry_run=False)
     conn.close()
 
     assert report.deleted == 1  # missing files treated as success → row removed
@@ -349,7 +357,7 @@ def test_select_candidates_does_not_delete(tmp_path: Path) -> None:
     old = _seed(config, age_days=40)
 
     conn = _conn(config)
-    cands = select_candidates(conn, config, now=_NOW)
+    cands = select_candidates(conn, config, _policy(config), now=_NOW)
     conn.close()
 
     assert len(cands) == 1

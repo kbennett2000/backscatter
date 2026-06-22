@@ -1,7 +1,8 @@
 # 9. Retention / pruning — bound the archive by age and/or size
 
 ## Status
-Accepted
+Accepted. Amended by [ADR-0013](0013-runtime-retention.md): the policy is now
+DB-backed runtime state edited in the UI; the env vars below seed it on first run only.
 
 ## Context
 Through Slice 10 there was **no retention**: `collect` kept every raw volume and

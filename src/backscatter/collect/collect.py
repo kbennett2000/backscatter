@@ -29,7 +29,7 @@ from backscatter.prune.prune import run_prune
 from backscatter.render.render import RenderResult, render_sweep, render_volume
 from backscatter.sites.select import RankedSite, rank_sites
 from backscatter.sites.table import site_by_icao
-from backscatter.store import db
+from backscatter.store import db, settings
 from backscatter.store import locations as locations_store
 from backscatter.track.associate import Candidate, associate_candidates
 from backscatter.track.detect import detect_cells
@@ -542,13 +542,15 @@ def run_collect(
                 log.exception("collect cycle errored; backing off and continuing")
             # Throttled retention pass: self-bounds the archive without a separate
             # cron. Runs the first cycle, then at most once per prune_interval_s. A
-            # prune failure must not end collection either.
-            if config.retention_active and _prune_due(
+            # prune failure must not end collection either. The policy is read LIVE from
+            # the DB each pass (ADR-0013), so a UI edit takes effect with no restart.
+            policy = settings.get_retention(conn)
+            if policy.active and _prune_due(
                 now, last_prune_at, config.prune_interval_s
             ):
                 last_prune_at = now
                 try:
-                    run_prune(conn, config, now=now, dry_run=False)
+                    run_prune(conn, config, policy, now=now, dry_run=False)
                 except Exception:
                     log.exception("prune pass errored; continuing")
             cycles += 1

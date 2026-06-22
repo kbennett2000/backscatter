@@ -14,7 +14,7 @@ from backscatter.backfill.backfill import list_range, plan_backfill, run_backfil
 from backscatter.config import Config, SeedLocation
 from backscatter.ingest import naming, s3
 from backscatter.render.render import RenderResult
-from backscatter.store import db
+from backscatter.store import db, settings
 
 _NOW = datetime(2026, 6, 20, 12, 0, tzinfo=UTC)
 _BODY = b"vol-bytes"  # 9 bytes — exact for byte-estimate assertions
@@ -42,6 +42,9 @@ def _config(tmp_path: Path, *, age: float | None = None) -> Config:
 def _conn(config: Config) -> db.sqlite3.Connection:
     conn = db.connect(config.db_path)
     db.init_db(conn)
+    # Retention is DB-backed (ADR-0013); seed it from the config so the backfill plan's
+    # age-window warning reflects this test's policy, as it did when it read config.
+    settings.ensure_retention_seeded(conn, config)
     return conn
 
 

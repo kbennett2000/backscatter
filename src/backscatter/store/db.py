@@ -64,6 +64,16 @@ CREATE TABLE IF NOT EXISTS tracks (
     site        TEXT NOT NULL,
     created_at  TEXT NOT NULL   -- ISO-8601 UTC; the scan that first saw the track
 );
+
+-- Runtime retention policy (Slice 29 / ADR-0013). A single row (id=1) holds the
+-- archive's age/size limits, seeded from env on first run then user-managed via the
+-- API. NULL for either limit = that limit off. The collect loop reads this live.
+CREATE TABLE IF NOT EXISTS retention_settings (
+    id             INTEGER PRIMARY KEY CHECK (id = 1),  -- singleton row
+    max_age_days   REAL,             -- NULL = age limit off
+    max_size_bytes INTEGER,          -- NULL = size cap off
+    updated_at     TEXT NOT NULL     -- ISO-8601 UTC
+);
 """
 
 # Render columns, added to `volumes` after the base table. Old dev DBs created

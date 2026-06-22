@@ -26,6 +26,7 @@ from pathlib import Path
 
 from backscatter.config import Config
 from backscatter.store import db
+from backscatter.store.settings import RetentionPolicy
 
 log = logging.getLogger("backscatter.prune")
 
@@ -76,17 +77,25 @@ class PruneReport:
 
 
 def select_candidates(
-    conn: sqlite3.Connection, config: Config, *, now: datetime
+    conn: sqlite3.Connection,
+    config: Config,
+    policy: RetentionPolicy,
+    *,
+    now: datetime,
 ) -> list[PruneCandidate]:
-    """Pure selection: which frames the current policy would prune. No deletion."""
+    """Pure selection: which frames ``policy`` would prune. No deletion.
+
+    ``config`` supplies on-disk paths; ``policy`` (the live, DB-backed limits) decides
+    what's over the line.
+    """
     rows = db.frames_for_retention(conn)  # oldest scan first
     if not rows:
         return []
 
     age_hits: set[int] = set()
-    if config.retention_max_age_days is not None:
+    if policy.max_age_days is not None:
         cutoff = (
-            now - timedelta(days=config.retention_max_age_days)
+            now - timedelta(days=policy.max_age_days)
         ).isoformat()
         age_hits = {r["id"] for r in rows if r["scan_time"] < cutoff}
 
@@ -102,8 +111,8 @@ def select_candidates(
         return cached
 
     size_hits: set[int] = set()
-    if config.retention_max_size_bytes is not None:
-        cap = config.retention_max_size_bytes
+    if policy.max_size_bytes is not None:
+        cap = policy.max_size_bytes
         total = sum(row_bytes(r) for r in rows)
         for r in rows:  # oldest first — drop until back under the cap
             if total <= cap:
@@ -140,10 +149,15 @@ def select_candidates(
 
 
 def run_prune(
-    conn: sqlite3.Connection, config: Config, *, now: datetime, dry_run: bool
+    conn: sqlite3.Connection,
+    config: Config,
+    policy: RetentionPolicy,
+    *,
+    now: datetime,
+    dry_run: bool,
 ) -> PruneReport:
-    """Select per the policy and, unless ``dry_run``, delete each selected frame."""
-    candidates = select_candidates(conn, config, now=now)
+    """Select per ``policy`` and, unless ``dry_run``, delete each selected frame."""
+    candidates = select_candidates(conn, config, policy, now=now)
 
     if dry_run:
         return _report(candidates, dry_run=True, skipped=0, errors=())

@@ -20,7 +20,7 @@ from backscatter.config import (
     resolve_location,
     validate_locations,
 )
-from backscatter.store import db
+from backscatter.store import db, settings
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS locations (
@@ -44,10 +44,11 @@ def init_locations(conn: sqlite3.Connection) -> None:
 
 
 def bootstrap(conn: sqlite3.Connection, config: Config) -> None:
-    """Ensure the schema exists and the location store is seeded. Idempotent."""
-    db.init_db(conn)
+    """Ensure schema + the location and retention stores are seeded. Idempotent."""
+    db.init_db(conn)  # creates the retention_settings table too
     init_locations(conn)
     ensure_seeded(conn, config)
+    settings.ensure_retention_seeded(conn, config)
 
 
 def connect_bootstrapped(config: Config) -> sqlite3.Connection:

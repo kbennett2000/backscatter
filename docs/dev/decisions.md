@@ -16,6 +16,9 @@ alternatives that were weighed — so the "why" isn't lost.
 | 0008 | [Mutable locations in SQLite](../decisions/0008-mutable-locations-sqlite.md) — locations become persisted state, env seeds only |
 | 0009 | [Retention & pruning](../decisions/0009-retention-pruning.md) — bound the archive by age and/or size |
 | 0010 | [Web-triggered backfill](../decisions/0010-web-triggered-backfill-job.md) — one-click backfill as an in-process async job; two-writer safety via WAL |
+| 0011 | [Live-chunks frame](../decisions/0011-live-chunks-frame.md) — near-real-time frame from the chunks bucket, reconciled to assembled |
+| 0012 | [Intra-volume SAILS cuts](../decisions/0012-intra-volume-sails-cuts.md) — surface each 0.5° surveillance cut as its own frame |
+| 0013 | [Runtime retention](../decisions/0013-runtime-retention.md) — retention becomes DB-backed runtime state; env seeds only |
 
 New architectural decisions should be added here as the next numbered file — see
 [Contributing](contributing.md).
