@@ -62,7 +62,13 @@ assembler + collect loop.
   (no SAILS) behavior is unchanged — one cut per volume, already at the radar's floor.
 - The live assembler must fetch more of each volume's chunks (through the SAILS cut,
   ~60% of the volume) rather than stopping at the base cut (~8 chunks) — more S3 GETs
-  (free/anonymous), bounded to one in-flight volume.
+  (free/anonymous), and it holds the in-flight volume's accumulated bytes (~10 MB) in
+  the per-site cursor until the volume rolls over.
+- Each SAILS frame stores its own raw partial (the accumulated stream through that cut,
+  ~6–9 MB) at a synthetic `_V06` path keyed by its sweep time; the base frame's partial
+  is replaced by the complete assembled volume on reconcile. So precip raw storage grows
+  (~one extra partial per SAILS cut per volume), bounded by the retention window
+  (ADR-0009) and only during precip.
 - SAILS frames are not recoverable from the archive: if live collection misses the
   window (server down), that mid-volume cut is gone — acceptable, since no assembled
   object encodes it at that timestamp anyway.

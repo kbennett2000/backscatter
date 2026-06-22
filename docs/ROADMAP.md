@@ -408,7 +408,7 @@ frame 0.6 min old while the freshest assembled volume was 6.0 min old.
   + frontend unchanged (the live frame surfaces through the existing UI; the freshness cue just
   reads a much smaller age).
 
-## Intra-volume SAILS cuts (27a DONE, 27b next) — ADR-0012
+## Intra-volume SAILS cuts (27a DONE, 27b built — pending live visual check) — ADR-0012
 One frame per volume left backscatter ~5 min stale *between* volumes during precip, while
 RadarScope showed the mid-volume SAILS cuts. Confirmed live: backscatter correctly served its
 newest live frame, but that frame was the volume's base cut; a fresher SAILS cut was decoded and
@@ -424,11 +424,13 @@ dropped. Surface **every** 0.5° surveillance cut (base + SAILS/MRLE) as its own
   (`tests/fixtures/sails_KFTG_layout.npz`) + synthetic split-cut/SAILS layouts — selection
   `[0, 9]`, Doppler twins excluded, times `00:24:20` / `00:26:44`, base == volume start. Real-bytes
   spot-check confirmed 2 distinct cuts (71 dBZ apart) and the freeze progression.
-- **Slice 27b — live wiring (next).** The live chunks assembler keeps accumulating the volume and
-  surfaces each newly-frozen cut; base stays `source='live'` (reconciles as today), SAILS cuts get
-  `source='live-sails'` and stay permanent (no assembled object at their timestamp; reconcile's
-  `WHERE source='live'` skips them). No schema migration. Requires a visual check vs RadarScope on
-  a live SAILS event before merge.
+- **Slice 27b — live wiring (built; pending the live visual check before merge).** `chunks.
+  ride_volume` rides one active volume dir, accumulates its chunks across polls, and surfaces each
+  newly-frozen cut; the collect loop indexes the base as `source='live'` (reconciles as today) and
+  each SAILS cut as `source='live-sails'`, permanent (no assembled object at their timestamp;
+  reconcile's `WHERE source='live'` skips them). No schema migration. Hermetic tests cover the
+  dual-source wiring + reconcile-skip; **merge gated on a RadarScope visual check on a live SAILS
+  event** (per CLAUDE.md — a rendering change doesn't merge on "it produced frames").
 
 ## Later (not scheduled yet)
 - **Storm track lines / motion vectors** — parked as a real computer-vision effort (cell

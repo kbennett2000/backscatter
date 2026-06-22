@@ -119,8 +119,13 @@ def collect_cycle(
         try:
             results.append(
                 _collect_location(
-                    location, config, conn, now=now, client=client,
-                    render_fn=render_fn, live_cursors=cursors,
+                    location,
+                    config,
+                    conn,
+                    now=now,
+                    client=client,
+                    render_fn=render_fn,
+                    live_cursors=cursors,
                     render_sweep_fn=render_sweep_fn,
                 )
             )
@@ -158,8 +163,13 @@ def _collect_location(
         try:
             cursor = live_cursors.get(primary, LiveCursor())
             live_cursors[primary] = _try_live_frame(
-                config, conn, primary, cursor,
-                now=now, client=client, render_sweep_fn=render_sweep_fn,
+                config,
+                conn,
+                primary,
+                cursor,
+                now=now,
+                client=client,
+                render_sweep_fn=render_sweep_fn,
             )
             _reconcile_live_frames(config, conn, primary, now=now, client=client)
         except Exception:
@@ -210,49 +220,56 @@ def _try_live_frame(
     client: S3Client,
     render_sweep_fn: RenderSweepFn,
 ) -> LiveCursor:
-    """Assemble + index the live 0.5 deg frame for ``site``; return the new cursor.
+    """Assemble + index every live 0.5 deg surveillance cut for ``site`` (Slice 27b).
 
-    Bounded cost: ``advance_cursor`` rides the active dir with one LIST; we only
-    decode when chunks actually advanced AND the scan isn't already indexed. A
-    completed/indexed volume is marked ``done`` and never re-decoded.
+    ``ride_volume`` rides the active dir (one LIST + a fetch of only new chunks) and
+    returns each newly-frozen cut. The first cut of a volume is the base
+    (``source='live'``, reconciled to the assembled volume later); each later SAILS/MRLE
+    cut is ``source='live-sails'``: permanent, since the archive has no object at its
+    timestamp to reconcile to (ADR-0012). A stuck volume (no end chunk) is abandoned
+    past the give-up age so the cursor rolls onto the next.
     """
-    cur = chunks.advance_cursor(client, site, cursor)
-    if cur.volume_dir is None or cur.done or cur.scan_time is None:
-        return cur
-    grew = cur.volume_dir != cursor.volume_dir or cur.chunk_count > cursor.chunk_count
-    if not grew:
-        return cur  # no new chunks since last poll — skip the decode
-    if db.volume_source(conn, site, cur.scan_time) is not None:
-        return _done(cur)  # already have this scan (live or assembled)
-
-    assembled = chunks.assemble_lowest_sweep(client, cur.volume_dir)
-    if assembled is None:
-        # 0.5 deg cut not complete yet. Abandon only if implausibly old — the
-        # assembled path will collect it — so the cursor never sticks on one volume.
-        if cur.scan_time < now - _LIVE_GIVEUP_AGE:
-            return _done(cur)
-        return cur
-    sweep, raw = assembled
-    # The decoded scan_time is authoritative (== the assembled _V06 name).
-    scan_time = sweep.scan_time
-    if db.volume_source(conn, site, scan_time) is not None:
-        return _done(cur)
-
-    dest = pull.destination_for(config, site, scan_time)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(raw)
-    try:
-        db.record_volume(
-            conn, site=site, scan_time=scan_time, s3_key=cur.volume_dir,
-            path=dest, size_bytes=len(raw), downloaded_at=now, source="live",
+    cur, fresh = chunks.ride_volume(client, site, cursor)
+    for sweep in fresh:
+        scan_time = sweep.scan_time
+        if db.volume_source(conn, site, scan_time) is not None:
+            continue  # already indexed (assembled raced us, or re-seen)
+        is_base = cur.volume_start is not None and scan_time == cur.volume_start
+        source = "live" if is_base else "live-sails"
+        dest = pull.destination_for(config, site, scan_time)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(cur.buf)
+        try:
+            db.record_volume(
+                conn,
+                site=site,
+                scan_time=scan_time,
+                s3_key=cur.volume_dir or "",
+                path=dest,
+                size_bytes=len(cur.buf),
+                downloaded_at=now,
+                source=source,
+            )
+        except sqlite3.IntegrityError:
+            continue  # raced another writer; it owns the row now
+        _render_live_and_record(
+            config,
+            conn,
+            sweep,
+            site=site,
+            scan_time=scan_time,
+            now=now,
+            render_sweep_fn=render_sweep_fn,
+            source=source,
         )
-    except sqlite3.IntegrityError:
-        return _done(cur)  # raced the assembled writer; it owns the row now
-    _render_live_and_record(
-        config, conn, sweep, site=site, scan_time=scan_time,
-        now=now, render_sweep_fn=render_sweep_fn,
-    )
-    return _done(cur)
+    # Abandon a stuck volume (no end chunk) so the cursor rolls onto the next one.
+    if (
+        not cur.done
+        and cur.volume_start is not None
+        and (cur.volume_start < now - _LIVE_GIVEUP_AGE)
+    ):
+        return replace(cur, done=True)
+    return cur
 
 
 def _render_live_and_record(
@@ -264,17 +281,26 @@ def _render_live_and_record(
     scan_time: datetime,
     now: datetime,
     render_sweep_fn: RenderSweepFn,
+    source: str = "live",
 ) -> bool:
     """Render an already-decoded live sweep + record it; mirror of render_and_index."""
     try:
         render = render_sweep_fn(sweep, config, site_icao=site, scan_time=scan_time)
         image_path = render.png_path.relative_to(config.data_dir / "renders").as_posix()
         db.record_render(
-            conn, site=site, scan_time=scan_time, image_path=image_path,
-            elevation_deg=render.elevation_deg, width=render.width,
-            height=render.height, bounds=render.bounds_wgs84, rendered_at=now,
+            conn,
+            site=site,
+            scan_time=scan_time,
+            image_path=image_path,
+            elevation_deg=render.elevation_deg,
+            width=render.width,
+            height=render.height,
+            bounds=render.bounds_wgs84,
+            rendered_at=now,
         )
-        log.info("[live] %s %s -> %s (source=live)", site, _ts(scan_time), image_path)
+        log.info(
+            "[live] %s %s -> %s (source=%s)", site, _ts(scan_time), image_path, source
+        )
         return True
     except Exception:
         log.exception(
@@ -313,22 +339,22 @@ def _reconcile_live_frames(
         except Exception:
             log.exception(
                 "[live] reconcile fetch failed for %s %s; will retry",
-                site, _ts(scan_time),
+                site,
+                _ts(scan_time),
             )
             continue
         dest = pull.destination_for(config, site, scan_time)
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(data)  # overwrite the partial with the complete volume
         db.upgrade_to_assembled(
-            conn, site=site, scan_time=scan_time,
-            s3_key=key, path=dest, size_bytes=len(data),
+            conn,
+            site=site,
+            scan_time=scan_time,
+            s3_key=key,
+            path=dest,
+            size_bytes=len(data),
         )
         log.info("[live] reconciled %s %s -> source=assembled", site, _ts(scan_time))
-
-
-def _done(cursor: LiveCursor) -> LiveCursor:
-    """The cursor with ``done=True`` — its active volume needs no more live work."""
-    return replace(cursor, done=True)
 
 
 def render_and_index(
@@ -350,9 +376,7 @@ def render_and_index(
     tag = label or site
     try:
         render = render_fn(volume_path, config)
-        image_path = (
-            render.png_path.relative_to(config.data_dir / "renders").as_posix()
-        )
+        image_path = render.png_path.relative_to(config.data_dir / "renders").as_posix()
         db.record_render(
             conn,
             site=site,
@@ -433,9 +457,14 @@ def run_collect(
                     conn, config.site_override
                 )
                 collect_cycle(
-                    locations, config, conn,
-                    now=now, client=client, render_fn=render_fn,
-                    live_cursors=live_cursors, render_sweep_fn=render_sweep_fn,
+                    locations,
+                    config,
+                    conn,
+                    now=now,
+                    client=client,
+                    render_fn=render_fn,
+                    live_cursors=live_cursors,
+                    render_sweep_fn=render_sweep_fn,
                 )
             except Exception:
                 # One bad cycle (network/S3/decode) must not end collection.
