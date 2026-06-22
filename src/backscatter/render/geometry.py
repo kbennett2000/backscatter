@@ -89,6 +89,19 @@ def mercator_to_lonlat(
     return lon, lat
 
 
+def geodesic_between(
+    lon1: float, lat1: float, lon2: float, lat2: float
+) -> tuple[float, float]:
+    """Azimuth (deg cw from north) and ground distance (m) from point 1 to point 2.
+
+    Scalar point-to-point inverse geodesic — used by storm-cell tracking (Slice 28b)
+    to measure a cell's displacement between frames in true ground meters (not the
+    ~sec(lat)-inflated Mercator distance). The inverse of ``ground_destination``.
+    """
+    az, _back_az, dist = _GEOD.inv(lon1, lat1, lon2, lat2)
+    return float(az) % 360.0, float(dist)
+
+
 def geodesic_inverse(
     site_lat: float,
     site_lon: float,

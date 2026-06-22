@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from backscatter.track.detect import Cell
+    from backscatter.track.associate import TrackedCell
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS volumes (
@@ -55,6 +55,15 @@ CREATE TABLE IF NOT EXISTS cells (
     v_ms          REAL                -- northward motion, m/s (28b)
 );
 CREATE INDEX IF NOT EXISTS idx_cells_frame ON cells(site, scan_time);
+
+-- Persistent track identities (Slice 28b). One row per track; its AUTOINCREMENT
+-- id is the race-free source of cells.track_id (collect + a concurrent backfill
+-- worker can both allocate without colliding, which MAX(track_id)+1 can't promise).
+CREATE TABLE IF NOT EXISTS tracks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    site        TEXT NOT NULL,
+    created_at  TEXT NOT NULL   -- ISO-8601 UTC; the scan that first saw the track
+);
 """
 
 # Render columns, added to `volumes` after the base table. Old dev DBs created
@@ -252,19 +261,35 @@ def record_render(
     conn.commit()
 
 
+def allocate_track_id(
+    conn: sqlite3.Connection, *, site: str, created_at: datetime
+) -> int:
+    """Reserve a fresh persistent track id (Slice 28b) and return it.
+
+    Inserts a ``tracks`` row and returns its AUTOINCREMENT id, so two writers
+    (collect + a backfill worker) never collide on an id. Caller commits as part of
+    the frame's ``record_cells`` write.
+    """
+    cur = conn.execute(
+        "INSERT INTO tracks (site, created_at) VALUES (?, ?)",
+        (site, created_at.isoformat()),
+    )
+    return int(cur.lastrowid)  # type: ignore[arg-type]
+
+
 def record_cells(
     conn: sqlite3.Connection,
     *,
     site: str,
     scan_time: datetime,
-    cells: list[Cell],
+    cells: list[TrackedCell],
 ) -> None:
-    """Replace the stored storm cells for one frame (Slice 28a).
+    """Replace the stored storm cells for one frame, with track identity + motion.
 
     Cells are keyed to a frame's ``(site, scan_time)``; this deletes any existing rows
     for that frame first so a re-render (or a live→assembled reconcile that re-detects)
-    is idempotent rather than additive. ``track_id``/``u_ms``/``v_ms`` are left NULL —
-    cross-frame association fills them in Slice 28b.
+    is idempotent rather than additive. ``track_id``/``u_ms``/``v_ms`` come from the
+    Slice 28b association pass.
     """
     conn.execute(
         "DELETE FROM cells WHERE site = ? AND scan_time = ?",
@@ -272,21 +297,72 @@ def record_cells(
     )
     conn.executemany(
         "INSERT INTO cells "
-        "(site, scan_time, centroid_lon, centroid_lat, max_dbz, area_km2) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "(site, scan_time, centroid_lon, centroid_lat, max_dbz, area_km2, "
+        "track_id, u_ms, v_ms) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 site,
                 scan_time.isoformat(),
-                c.centroid_lon,
-                c.centroid_lat,
-                c.max_dbz,
-                c.area_km2,
+                tc.cell.centroid_lon,
+                tc.cell.centroid_lat,
+                tc.cell.max_dbz,
+                tc.cell.area_km2,
+                tc.track_id,
+                tc.u_ms,
+                tc.v_ms,
             )
-            for c in cells
+            for tc in cells
         ],
     )
     conn.commit()
+
+
+def latest_tracked_cells_before(
+    conn: sqlite3.Connection, *, site: str, scan_time: datetime
+) -> tuple[datetime | None, list[TrackedCell]]:
+    """The most recent earlier frame's tracked cells, for cross-frame association.
+
+    Returns ``(prev_scan_time, cells)`` for the newest frame strictly before
+    ``scan_time`` (same site) that has any cells, or ``(None, [])`` if there is none
+    (or no table yet). Only rows with a non-NULL ``track_id`` are returned as track
+    anchors; ``u_ms``/``v_ms`` default to 0.0 when absent.
+    """
+    from backscatter.track.associate import TrackedCell
+    from backscatter.track.detect import Cell
+
+    try:
+        head = conn.execute(
+            "SELECT scan_time FROM cells WHERE site = ? AND scan_time < ? "
+            "ORDER BY scan_time DESC LIMIT 1",
+            (site, scan_time.isoformat()),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return (None, [])  # no cells table yet
+    if head is None:
+        return (None, [])
+
+    prev_iso = str(head["scan_time"])
+    rows = conn.execute(
+        "SELECT centroid_lon, centroid_lat, max_dbz, area_km2, track_id, u_ms, v_ms "
+        "FROM cells WHERE site = ? AND scan_time = ? AND track_id IS NOT NULL",
+        (site, prev_iso),
+    ).fetchall()
+    tracked = [
+        TrackedCell(
+            cell=Cell(
+                centroid_lon=row["centroid_lon"],
+                centroid_lat=row["centroid_lat"],
+                max_dbz=row["max_dbz"],
+                area_km2=row["area_km2"],
+            ),
+            track_id=int(row["track_id"]),
+            u_ms=row["u_ms"] if row["u_ms"] is not None else 0.0,
+            v_ms=row["v_ms"] if row["v_ms"] is not None else 0.0,
+        )
+        for row in rows
+    ]
+    return (datetime.fromisoformat(prev_iso), tracked)
 
 
 def mark_render_failed(

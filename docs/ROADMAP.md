@@ -449,10 +449,20 @@ Tracking is *estimation*, framed in-UI as estimated motion, never a nowcast (not
   `BACKSCATTER_TRACK_CELLS`, best-effort. Value-based tests (known centroid/area/lon-lat, flip
   guard, threshold/area filters) + DB round-trip; real-data smoke (correctly finds 0 storm cells
   in a weak fixture — no false positives).
-- **Slice 28b — association + motion (planned).** Persistent `track_id` continuity by matching
-  each frame's cells against the previous stored frame (TITAN cost-matched nearest cell, motion
-  first-guess); motion vector per track from position history; simple split/merge (a split spawns a
-  new track). Tests: synthetic 2-frame displacement → known u/v, ID continuity, new/lost tracks.
+- **Slice 28b — association + motion (done).** `track/associate.py::associate` carries
+  `track_id` forward by predicting each prior track's position (its motion × Δt) and matching to
+  this frame's detections with `scipy.optimize.linear_sum_assignment` (Hungarian, optimal) gated
+  by a speed-based search radius; motion = EMA-smoothed ground velocity (`u` east, `v` north) from
+  the matched step, measured with the new `geometry.geodesic_between` (true ground m/s, not
+  Mercator). New `tracks` table (AUTOINCREMENT) gives race-free ids; `latest_tracked_cells_before`
+  feeds the previous frame; `record_cells` now stores id+motion. Wired into the collect seam
+  (assembled + live) with a 20-min max-gap guard; works in steady-state and oldest-first backfill.
+  Simple split/merge (a split spawns a new track); full TITAN lineage deferred. Value tests cover
+  continuity, new/lost/no-resurrection, crossing cells (predict-forward beats nearest-centroid),
+  beyond-radius teleport guard, motion smoothing. **Real-data proof:** 7 consecutive KDMX volumes
+  over the 2024-05-21 Greenfield EF4 supercell → stable ids across 6–7 frames, 44–50 kt toward
+  ~30–44° (NE), 55–61 dBZ cores — matches the documented ~45 mph NE storm motion (NWS SCIT family).
+  On-map RadarScope visual comparison lands in 28c.
 - **Slice 28c — API + map overlay (planned).** `/cells` endpoint, MapLibre markers +
   projected-motion line, off-by-default toggle, in-UI estimation disclaimer. **Visual check vs
   RadarScope** for the same storms.

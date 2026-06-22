@@ -31,6 +31,7 @@ from backscatter.sites.select import RankedSite, rank_sites
 from backscatter.sites.table import site_by_icao
 from backscatter.store import db
 from backscatter.store import locations as locations_store
+from backscatter.track.associate import associate
 from backscatter.track.detect import detect_cells
 
 log = logging.getLogger("backscatter.collect")
@@ -45,6 +46,11 @@ FAILOVER_CANDIDATES = 3
 # get its 0.5 deg cut live), so the cursor never gets stuck on one bad volume.
 _LIVE_RECONCILE_DELAY = timedelta(minutes=6)
 _LIVE_GIVEUP_AGE = timedelta(minutes=8)
+
+# Storm-cell tracking (Slice 28b): don't link cells across an archive gap larger
+# than this — a >20 min jump (a few missed volumes) makes predicted positions
+# meaningless, so the frame starts fresh tracks instead of guessing continuity.
+_TRACK_MAX_GAP = timedelta(minutes=20)
 
 # The render steps, injectable so tests can stub out Py-ART. ``RenderFn`` decodes a
 # stored volume file; ``RenderSweepFn`` renders an already-decoded live Sweep.
@@ -380,8 +386,34 @@ def _track_cells_for_frame(
         return
     try:
         cells = detect_cells(render.raster.dbz, render.raster.bounds_3857)
-        db.record_cells(conn, site=site, scan_time=scan_time, cells=cells)
-        log.info("[track] %s %s -> %d cells", site, _ts(scan_time), len(cells))
+        # Associate against the newest earlier frame's tracks (within the gap limit)
+        # to carry track ids forward and estimate motion; an old/absent predecessor
+        # means every cell starts a fresh track.
+        prev_time, prev = db.latest_tracked_cells_before(
+            conn, site=site, scan_time=scan_time
+        )
+        if prev_time is None or scan_time - prev_time > _TRACK_MAX_GAP:
+            prev, dt_s = [], 0.0
+        else:
+            dt_s = (scan_time - prev_time).total_seconds()
+        tracked = associate(
+            prev,
+            cells,
+            dt_s,
+            allocate_id=lambda: db.allocate_track_id(
+                conn, site=site, created_at=scan_time
+            ),
+        )
+        db.record_cells(conn, site=site, scan_time=scan_time, cells=tracked)
+        prev_ids = {p.track_id for p in prev}
+        continued = sum(1 for t in tracked if t.track_id in prev_ids)
+        log.info(
+            "[track] %s %s -> %d cells (%d continued)",
+            site,
+            _ts(scan_time),
+            len(tracked),
+            continued,
+        )
     except Exception:
         log.exception(
             "[track] cell detection failed for %s %s; skipping", site, _ts(scan_time)

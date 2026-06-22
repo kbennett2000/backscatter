@@ -18,6 +18,7 @@ import pytest
 
 from backscatter.render.geometry import lonlat_to_mercator, mercator_to_lonlat
 from backscatter.store import db
+from backscatter.track.associate import TrackedCell
 from backscatter.track.detect import (
     DEFAULT_DBZ_THRESHOLD,
     Cell,
@@ -116,10 +117,20 @@ def _conn(tmp_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def _cells() -> list[Cell]:
+def _cells() -> list[TrackedCell]:
     return [
-        Cell(centroid_lon=-104.5, centroid_lat=39.8, max_dbz=60.0, area_km2=30.0),
-        Cell(centroid_lon=-104.2, centroid_lat=39.9, max_dbz=48.0, area_km2=12.0),
+        TrackedCell(
+            Cell(centroid_lon=-104.5, centroid_lat=39.8, max_dbz=60.0, area_km2=30.0),
+            track_id=1,
+            u_ms=5.0,
+            v_ms=-3.0,
+        ),
+        TrackedCell(
+            Cell(centroid_lon=-104.2, centroid_lat=39.9, max_dbz=48.0, area_km2=12.0),
+            track_id=2,
+            u_ms=0.0,
+            v_ms=0.0,
+        ),
     ]
 
 
@@ -129,13 +140,15 @@ def test_record_cells_round_trip(tmp_path: Path) -> None:
     db.record_cells(conn, site="KFTG", scan_time=scan, cells=_cells())
 
     rows = conn.execute(
-        "SELECT centroid_lon, centroid_lat, max_dbz, area_km2, track_id "
+        "SELECT centroid_lon, centroid_lat, max_dbz, area_km2, track_id, u_ms, v_ms "
         "FROM cells WHERE site = ? AND scan_time = ? ORDER BY max_dbz DESC",
         ("KFTG", scan.isoformat()),
     ).fetchall()
     assert len(rows) == 2
     assert rows[0]["max_dbz"] == pytest.approx(60.0)
-    assert rows[0]["track_id"] is None  # association is Slice 28b
+    assert rows[0]["track_id"] == 1
+    assert rows[0]["u_ms"] == pytest.approx(5.0)
+    assert rows[0]["v_ms"] == pytest.approx(-3.0)
 
 
 def test_record_cells_replaces_not_appends(tmp_path: Path) -> None:
@@ -160,3 +173,30 @@ def test_delete_frame_cascades_to_cells(tmp_path: Path) -> None:
 
     (count,) = conn.execute("SELECT COUNT(*) FROM cells").fetchone()
     assert count == 0
+
+
+def test_allocate_track_id_is_monotonic(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    when = datetime(2026, 6, 20, 21, 51, 7, tzinfo=UTC)
+    a = db.allocate_track_id(conn, site="KFTG", created_at=when)
+    b = db.allocate_track_id(conn, site="KFTG", created_at=when)
+    assert b > a  # AUTOINCREMENT never reuses an id
+
+
+def test_latest_tracked_cells_before(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    t1 = datetime(2026, 6, 20, 21, 50, 0, tzinfo=UTC)
+    t2 = datetime(2026, 6, 20, 21, 55, 0, tzinfo=UTC)
+    db.record_cells(conn, site="KFTG", scan_time=t1, cells=_cells())
+
+    # No earlier frame for the first one.
+    prev_time, prev = db.latest_tracked_cells_before(conn, site="KFTG", scan_time=t1)
+    assert prev_time is None and prev == []
+
+    # t2 sees t1's cells, rebuilt with their track ids + motion.
+    prev_time, prev = db.latest_tracked_cells_before(conn, site="KFTG", scan_time=t2)
+    assert prev_time == t1
+    assert {p.track_id for p in prev} == {1, 2}
+    strongest = max(prev, key=lambda p: p.cell.max_dbz)
+    assert strongest.track_id == 1
+    assert strongest.u_ms == pytest.approx(5.0)
