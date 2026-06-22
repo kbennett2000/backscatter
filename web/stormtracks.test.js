@@ -51,18 +51,34 @@ test("forward handles a wrapped bearing (350° ≈ slightly west of north)", () 
 
 // --- feature inventory ---------------------------------------------------------
 
-test("moving cell → Point + main line + 4 ticks + arrowhead (7 features)", () => {
+test("moving cell → Point + main line + 2 ticks + arrowhead (5 features)", () => {
   const fc = trackFeatures([MOVING]);
   assert.equal(fc.type, "FeatureCollection");
-  assert.equal(fc.features.length, 7);
+  assert.equal(fc.features.length, 5);
   assert.equal(fc.features.filter((f) => f.geometry.type === "Point").length, 1);
-  assert.equal(fc.features.filter((f) => f.geometry.type === "LineString").length, 6);
-  // The four ticks carry their forecast minute.
+  assert.equal(fc.features.filter((f) => f.geometry.type === "LineString").length, 4);
+  // The two ticks carry their forecast minute (30-min horizon = ticks at 15/30).
   const tickMins = fc.features
     .filter((f) => f.properties.tick_min != null)
     .map((f) => f.properties.tick_min)
     .sort((a, b) => a - b);
-  assert.deepEqual(tickMins, [15, 30, 45, 60]);
+  assert.deepEqual(tickMins, [15, 30]);
+});
+
+test("main vector tip is the 30-min projection point (matches backend horizon)", () => {
+  const fc = trackFeatures([MOVING]); // 10 m/s east → 18 km over 30 min
+  const main = fc.features.find(
+    (f) =>
+      f.geometry.type === "LineString" &&
+      f.geometry.coordinates.length === 2 &&
+      f.properties.tick_min == null,
+  );
+  const [start, tip] = main.geometry.coordinates;
+  const cosLat = Math.cos((39.8 * Math.PI) / 180);
+  const expDLon = (10 * 30 * 60) / (M_PER_DEG_LAT * cosLat); // 18 km east in degrees
+  assert.ok(Math.abs(start[0] - -104.5) < 1e-12);
+  assert.ok(Math.abs(tip[0] - (-104.5 + expDLon)) < 1e-6);
+  assert.ok(Math.abs(tip[1] - 39.8) < 1e-6); // due east → lat ~unchanged
 });
 
 test("stationary cell → marker only, no vector/ticks", () => {

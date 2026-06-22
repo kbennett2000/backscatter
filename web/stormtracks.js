@@ -15,7 +15,10 @@
 
 // --- tunable overlay constants (ground distances in metres) -----------------
 const TICK_INTERVAL_MIN = 15; // a tick every 15 min along the track
-const TICK_COUNT = 4; // 4 ticks → 15/30/45/60 min; the 60-min point is the tip
+// TICK_COUNT × TICK_INTERVAL_MIN is the projection horizon, in minutes. Keep this
+// product equal to the backend's PROJECTION_MINUTES (api/frames.py) — that constant
+// is the single source of truth for how far ahead a cell's motion is projected.
+const TICK_COUNT = 2; // 2 ticks → 15/30 min; the 30-min point is the tip
 const TICK_HALF_LEN_M = 3500; // each cross-line is ~7 km wide
 const ARROW_LEN_M = 6000; // arrowhead barb length
 const ARROW_ANGLE_DEG = 28; // barb half-angle off the reversed heading
@@ -45,7 +48,7 @@ function _line(coords, props) {
  * @param {{track_id:number, lon:number, lat:number, max_dbz:number,
  *   speed_kmh:number, bearing_deg:(number|null)}[]} tracks - from /api/cells.
  * @returns {{type:"FeatureCollection", features:object[]}} per moving cell: a Point
- *   marker, the main vector (cell → 60-min point), one perpendicular tick cross-line
+ *   marker, the main vector (cell → 30-min point), one perpendicular tick cross-line
  *   per interval, and an arrowhead at the tip. A stationary cell (no bearing) is just
  *   the Point. Coordinates are [lon, lat] (GeoJSON order).
  */
