@@ -31,7 +31,7 @@ from backscatter.sites.select import RankedSite, rank_sites
 from backscatter.sites.table import site_by_icao
 from backscatter.store import db
 from backscatter.store import locations as locations_store
-from backscatter.track.associate import associate
+from backscatter.track.associate import Candidate, associate_candidates
 from backscatter.track.detect import detect_cells
 
 log = logging.getLogger("backscatter.collect")
@@ -51,6 +51,10 @@ _LIVE_GIVEUP_AGE = timedelta(minutes=8)
 # than this — a >20 min jump (a few missed volumes) makes predicted positions
 # meaningless, so the frame starts fresh tracks instead of guessing continuity.
 _TRACK_MAX_GAP = timedelta(minutes=20)
+# Coasting grace (Slice 28e): a track may miss up to this many frames and still resume
+# its id when the cell returns (a brief dip under the detection floor), rather than
+# restarting as a new track. Small so we never coast across a genuine dissipation.
+_TRACK_COAST_FRAMES = 2
 
 # The render steps, injectable so tests can stub out Py-ART. ``RenderFn`` decodes a
 # stored volume file; ``RenderSweepFn`` renders an already-decoded live Sweep.
@@ -386,26 +390,27 @@ def _track_cells_for_frame(
         return
     try:
         cells = detect_cells(render.raster.dbz, render.raster.bounds_3857)
-        # Associate against the newest earlier frame's tracks (within the gap limit)
-        # to carry track ids forward and estimate motion; an old/absent predecessor
-        # means every cell starts a fresh track.
-        prev_time, prev = db.latest_tracked_cells_before(
-            conn, site=site, scan_time=scan_time
+        # Associate against recently-active tracks — including ones that missed the
+        # last frame or two (coasting, Slice 28e) — so a cell that briefly dips under
+        # the detection floor resumes its track id + motion instead of restarting. Each
+        # candidate is aged by its time since last seen; the 20-min gap is a hard cap.
+        raw = db.active_tracks_for_coast(
+            conn, site=site, scan_time=scan_time, max_frames=_TRACK_COAST_FRAMES
         )
-        if prev_time is None or scan_time - prev_time > _TRACK_MAX_GAP:
-            prev, dt_s = [], 0.0
-        else:
-            dt_s = (scan_time - prev_time).total_seconds()
-        tracked = associate(
-            prev,
+        candidates = [
+            Candidate(tc, (scan_time - seen).total_seconds())
+            for tc, seen in raw
+            if scan_time - seen <= _TRACK_MAX_GAP
+        ]
+        tracked = associate_candidates(
+            candidates,
             cells,
-            dt_s,
             allocate_id=lambda: db.allocate_track_id(
                 conn, site=site, created_at=scan_time
             ),
         )
         db.record_cells(conn, site=site, scan_time=scan_time, cells=tracked)
-        prev_ids = {p.track_id for p in prev}
+        prev_ids = {c.track.track_id for c in candidates}
         continued = sum(1 for t in tracked if t.track_id in prev_ids)
         log.info(
             "[track] %s %s -> %d cells (%d continued)",

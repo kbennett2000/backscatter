@@ -432,7 +432,7 @@ dropped. Surface **every** 0.5° surveillance cut (base + SAILS/MRLE) as its own
   dual-source wiring + reconcile-skip; **merge gated on a RadarScope visual check on a live SAILS
   event** (per CLAUDE.md — a rendering change doesn't merge on "it produced frames").
 
-## Storm cell tracking (28a/28b/28c/28d DONE — pending operator's RadarScope visual check)
+## Storm cell tracking (28a–28e DONE — pending operator's RadarScope visual check)
 RadarScope-style storm tracks. Library survey (TINT/tintX/tobac/Py-ART) concluded none fit
 our streaming, polar-sweep, small-image loop cleanly — each is batch-shaped, wants a grid type
 we don't hold, and is either fragile (TINT: alpha, git-only) or heavy (tintX pins `numpy<2.0`;
@@ -494,6 +494,23 @@ Tracking is *estimation*, framed in-UI as estimated motion, never a nowcast (not
   geodesic `proj_*` retained in the API but unused for drawing). Honesty unchanged (estimated,
   steady-motion, not a nowcast). 50 node tests. **Operator's on-phone RadarScope tick comparison
   still pending.**
+- **Slice 28e — track grace period / coast (done).** Fixes flicker-and-restart: a cell that briefly
+  dips under the 40 dBZ / 10 km² detection floor used to end its track and restart under a new
+  `track_id` (detection is a hard, memoryless per-frame gate; association had no grace). Now a track
+  may **coast up to `_TRACK_COAST_FRAMES=2` missed frames** and **resume the same id + motion** when
+  the cell returns within its motion-scaled search radius. Coast state is **derived from the cells
+  history** — no ghost rows, no new table, no phantom markers; the gap frame stays empty, only id
+  continuity is preserved. `db.active_tracks_for_coast` returns each track's latest detection within
+  the last K+1 frames (+ last-seen); replaces `latest_tracked_cells_before`. `associate` gains a
+  per-candidate-age core `associate_candidates` (each candidate predicted/radius/velocity by its own
+  age); the old `associate(prev, curr, dt_s)` stays as a uniform-age wrapper so all 28b tests are
+  untouched. Collect feeds coast candidates (20-min hard gap still caps it). **Backend-only — no
+  API/frontend/schema change.** Value tests: coast resume within radius keeps id, beyond-radius gets
+  a new id; `active_tracks_for_coast` window/latest-per-track/K-bound. End-to-end smoke: present→
+  present→absent→present resumes the same id. ruff/mypy clean, 239 pytest + 50 node. Honesty
+  unchanged (estimated, steady-velocity; K small so it never coasts across real dissipation).
+  **Operator's on-phone confirmation pending** (a floor-riding cell should keep its vector through a
+  one/two-frame dip instead of resetting).
 
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher

@@ -183,20 +183,58 @@ def test_allocate_track_id_is_monotonic(tmp_path: Path) -> None:
     assert b > a  # AUTOINCREMENT never reuses an id
 
 
-def test_latest_tracked_cells_before(tmp_path: Path) -> None:
+def _tc(track_id: int, *, u: float = 10.0, lon: float = -104.5) -> TrackedCell:
+    return TrackedCell(
+        Cell(centroid_lon=lon, centroid_lat=39.8, max_dbz=50.0, area_km2=20.0),
+        track_id=track_id,
+        u_ms=u,
+        v_ms=0.0,
+    )
+
+
+def test_active_tracks_for_coast_offers_a_track_that_missed_a_frame(
+    tmp_path: Path,
+) -> None:
     conn = _conn(tmp_path)
-    t1 = datetime(2026, 6, 20, 21, 50, 0, tzinfo=UTC)
-    t2 = datetime(2026, 6, 20, 21, 55, 0, tzinfo=UTC)
-    db.record_cells(conn, site="KFTG", scan_time=t1, cells=_cells())
+    f1 = datetime(2026, 6, 20, 21, 50, tzinfo=UTC)
+    f2 = datetime(2026, 6, 20, 21, 55, tzinfo=UTC)
+    f3 = datetime(2026, 6, 20, 22, 0, tzinfo=UTC)
+    db.record_cells(conn, site="KFTG", scan_time=f1, cells=[_tc(1, u=12.0)])
+    # track 1 absent at f2 (only track 9 detected)
+    db.record_cells(conn, site="KFTG", scan_time=f2, cells=[_tc(9, lon=-103.0)])
 
-    # No earlier frame for the first one.
-    prev_time, prev = db.latest_tracked_cells_before(conn, site="KFTG", scan_time=t1)
-    assert prev_time is None and prev == []
+    # At f3, coasting (max_frames≥1) still offers track 1 from f1 (it missed f2),
+    # carrying its last-seen time + motion; track 9 comes from f2.
+    got = db.active_tracks_for_coast(conn, site="KFTG", scan_time=f3, max_frames=2)
+    by_id = {tc.track_id: (tc, seen) for tc, seen in got}
+    assert set(by_id) == {1, 9}
+    assert by_id[1][1] == f1  # last_seen = f1 (the missed-f2 coast)
+    assert by_id[1][0].u_ms == pytest.approx(12.0)
+    assert by_id[9][1] == f2
 
-    # t2 sees t1's cells, rebuilt with their track ids + motion.
-    prev_time, prev = db.latest_tracked_cells_before(conn, site="KFTG", scan_time=t2)
-    assert prev_time == t1
-    assert {p.track_id for p in prev} == {1, 2}
-    strongest = max(prev, key=lambda p: p.cell.max_dbz)
-    assert strongest.track_id == 1
-    assert strongest.u_ms == pytest.approx(5.0)
+
+def test_active_tracks_for_coast_window_and_latest_per_track(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+    f1 = datetime(2026, 6, 20, 21, 50, tzinfo=UTC)
+    f2 = datetime(2026, 6, 20, 21, 55, tzinfo=UTC)
+    f3 = datetime(2026, 6, 20, 22, 0, tzinfo=UTC)
+    f4 = datetime(2026, 6, 20, 22, 5, tzinfo=UTC)
+    db.record_cells(conn, site="KFTG", scan_time=f1, cells=[_tc(1)])
+    db.record_cells(conn, site="KFTG", scan_time=f2, cells=[_tc(9, lon=-103.0)])
+    db.record_cells(conn, site="KFTG", scan_time=f3, cells=[_tc(9, lon=-102.9)])
+
+    # max_frames=1 → window is the last 2 frames {f3,f2}: track 1 (last at f1) drops;
+    # track 9 returns its LATEST row (f3), once.
+    ids1 = {tc.track_id: seen for tc, seen in
+            db.active_tracks_for_coast(conn, site="KFTG", scan_time=f4, max_frames=1)}
+    assert ids1 == {9: f3}
+
+    # max_frames=2 → window {f3,f2,f1}: track 1 is back in range.
+    ids2 = {tc.track_id for tc, _ in
+            db.active_tracks_for_coast(conn, site="KFTG", scan_time=f4, max_frames=2)}
+    assert ids2 == {1, 9}
+
+    # max_frames=0 → previous frame only {f3}: no coasting.
+    ids0 = {tc.track_id for tc, _ in
+            db.active_tracks_for_coast(conn, site="KFTG", scan_time=f4, max_frames=0)}
+    assert ids0 == {9}

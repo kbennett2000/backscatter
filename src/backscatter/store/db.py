@@ -336,51 +336,59 @@ def cells_for_frame(
         return []
 
 
-def latest_tracked_cells_before(
-    conn: sqlite3.Connection, *, site: str, scan_time: datetime
-) -> tuple[datetime | None, list[TrackedCell]]:
-    """The most recent earlier frame's tracked cells, for cross-frame association.
+def active_tracks_for_coast(
+    conn: sqlite3.Connection, *, site: str, scan_time: datetime, max_frames: int
+) -> list[tuple[TrackedCell, datetime]]:
+    """Each track's most-recent detection within the last ``max_frames+1`` frames.
 
-    Returns ``(prev_scan_time, cells)`` for the newest frame strictly before
-    ``scan_time`` (same site) that has any cells, or ``(None, [])`` if there is none
-    (or no table yet). Only rows with a non-NULL ``track_id`` are returned as track
-    anchors; ``u_ms``/``v_ms`` default to 0.0 when absent.
+    The candidate set for cross-frame association *with coasting* (Slice 28e): every
+    track seen at most ``max_frames`` frames before ``scan_time`` (same site), as
+    ``(TrackedCell, last_seen)`` — so a track that missed the immediately-previous
+    frame is still offered, coasted forward by its age. ``max_frames=0`` collapses to
+    just the previous frame (no coasting). Only rows with a non-NULL ``track_id`` are
+    returned; ``u_ms``/``v_ms`` default to 0.0. ``[]`` if there is no cells table yet.
     """
     from backscatter.track.associate import TrackedCell
     from backscatter.track.detect import Cell
 
     try:
-        head = conn.execute(
-            "SELECT scan_time FROM cells WHERE site = ? AND scan_time < ? "
-            "ORDER BY scan_time DESC LIMIT 1",
-            (site, scan_time.isoformat()),
-        ).fetchone()
+        frames = conn.execute(
+            "SELECT DISTINCT scan_time FROM cells WHERE site = ? AND scan_time < ? "
+            "ORDER BY scan_time DESC LIMIT ?",
+            (site, scan_time.isoformat(), max_frames + 1),
+        ).fetchall()
     except sqlite3.OperationalError:
-        return (None, [])  # no cells table yet
-    if head is None:
-        return (None, [])
+        return []  # no cells table yet
+    if not frames:
+        return []
 
-    prev_iso = str(head["scan_time"])
+    oldest = str(frames[-1]["scan_time"])  # lower bound of the coast window
+    # SQLite returns the row of the MAX(scan_time) per group when bare columns are
+    # selected alongside it — so this is each track's latest detection in the window.
     rows = conn.execute(
-        "SELECT centroid_lon, centroid_lat, max_dbz, area_km2, track_id, u_ms, v_ms "
-        "FROM cells WHERE site = ? AND scan_time = ? AND track_id IS NOT NULL",
-        (site, prev_iso),
+        "SELECT centroid_lon, centroid_lat, max_dbz, area_km2, track_id, u_ms, v_ms, "
+        "scan_time, MAX(scan_time) FROM cells "
+        "WHERE site = ? AND scan_time >= ? AND scan_time < ? AND track_id IS NOT NULL "
+        "GROUP BY track_id",
+        (site, oldest, scan_time.isoformat()),
     ).fetchall()
-    tracked = [
-        TrackedCell(
-            cell=Cell(
-                centroid_lon=row["centroid_lon"],
-                centroid_lat=row["centroid_lat"],
-                max_dbz=row["max_dbz"],
-                area_km2=row["area_km2"],
+    return [
+        (
+            TrackedCell(
+                cell=Cell(
+                    centroid_lon=row["centroid_lon"],
+                    centroid_lat=row["centroid_lat"],
+                    max_dbz=row["max_dbz"],
+                    area_km2=row["area_km2"],
+                ),
+                track_id=int(row["track_id"]),
+                u_ms=row["u_ms"] if row["u_ms"] is not None else 0.0,
+                v_ms=row["v_ms"] if row["v_ms"] is not None else 0.0,
             ),
-            track_id=int(row["track_id"]),
-            u_ms=row["u_ms"] if row["u_ms"] is not None else 0.0,
-            v_ms=row["v_ms"] if row["v_ms"] is not None else 0.0,
+            datetime.fromisoformat(str(row["scan_time"])),
         )
         for row in rows
     ]
-    return (datetime.fromisoformat(prev_iso), tracked)
 
 
 def mark_render_failed(

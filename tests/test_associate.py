@@ -16,7 +16,14 @@ from collections.abc import Callable
 import pytest
 
 from backscatter.render.geometry import ground_destination
-from backscatter.track.associate import TrackedCell, associate
+from backscatter.track.associate import (
+    MAX_SPEED_MS,
+    MIN_RADIUS_M,
+    Candidate,
+    TrackedCell,
+    associate,
+    associate_candidates,
+)
 from backscatter.track.detect import Cell
 
 LON0, LAT0 = -104.5, 39.8
@@ -115,6 +122,33 @@ def test_zero_dt_starts_fresh_tracks() -> None:
 def test_empty_curr_returns_empty() -> None:
     prev = [TrackedCell(_cell(LON0, LAT0), track_id=7, u_ms=0.0, v_ms=0.0)]
     assert associate(prev, [], DT, allocate_id=_ids()) == []
+
+
+# --- coasting (Slice 28e): a candidate aged across a missed frame ---------------
+
+
+def test_coast_resume_within_radius_keeps_id() -> None:
+    # Track 7 moving east at 10 m/s, last seen 2 frames ago (it missed one). The cell
+    # reappears where its motion would have carried it → resumes the SAME id.
+    track = TrackedCell(_cell(LON0, LAT0), track_id=7, u_ms=10.0, v_ms=0.0)
+    age = 2 * DT
+    reappear = _moved(LON0, LAT0, 90.0, 10.0 * age)  # exactly the coasted position
+    (out,) = associate_candidates(
+        [Candidate(track, age)], [reappear], allocate_id=_ids(900)
+    )
+    assert out.track_id == 7  # resumed, not a fresh id
+    assert out.u_ms == pytest.approx(10.0, abs=0.1)
+
+
+def test_coast_beyond_radius_gets_new_id() -> None:
+    # A stationary-motion candidate (predicts to itself) aged 2 frames; a cell beyond
+    # the age-scaled radius is a different cell → new id, no false resume.
+    track = TrackedCell(_cell(LON0, LAT0), track_id=7, u_ms=0.0, v_ms=0.0)
+    age = 2 * DT
+    radius = max(MIN_RADIUS_M, MAX_SPEED_MS * age)
+    far = _moved(LON0, LAT0, 90.0, radius + 5_000.0)
+    (out,) = associate_candidates([Candidate(track, age)], [far], allocate_id=_ids(900))
+    assert out.track_id == 900
 
 
 def test_motion_smoothing_blends_with_prior() -> None:

@@ -48,6 +48,19 @@ class TrackedCell:
     v_ms: float  # ground velocity north, m/s
 
 
+@dataclass(frozen=True)
+class Candidate:
+    """A prior track offered for matching, with its age since last real detection.
+
+    ``age_s`` is the time since this track was actually detected (one frame for a
+    normally-continuing track; several for one coasting through missed frames, Slice
+    28e). Prediction, search radius, and the measured step velocity all scale by it.
+    """
+
+    track: TrackedCell
+    age_s: float
+
+
 def _predict_forward(tc: TrackedCell, dt_s: float) -> tuple[float, float]:
     """First-guess ``(lon, lat)`` for ``tc`` advanced along its motion over ``dt_s``.
 
@@ -78,34 +91,55 @@ def associate(
     *,
     allocate_id: Callable[[], int],
 ) -> list[TrackedCell]:
-    """Associate this frame's ``curr`` cells with the previous frame's ``prev`` tracks.
+    """Associate ``curr`` against a single previous frame, all tracks the same age.
 
-    Returns one :class:`TrackedCell` per ``curr`` cell, in the same order. Matched
-    cells inherit their predecessor's ``track_id`` and an EMA-smoothed motion; new
-    cells get a fresh id (via ``allocate_id``) and zero motion; vanished ``prev``
-    tracks simply end. With no usable predecessor frame (empty ``prev`` or
-    non-positive ``dt_s`` — e.g. an archive gap), every cell starts a new track.
+    Thin wrapper over :func:`associate_candidates` (every prior track aged by the same
+    ``dt_s``). A non-positive ``dt_s`` (or empty ``prev``) means no usable predecessor,
+    so every cell starts a new track.
+    """
+    return associate_candidates(
+        [Candidate(p, dt_s) for p in prev], curr, allocate_id=allocate_id
+    )
+
+
+def associate_candidates(
+    prev: list[Candidate],
+    curr: list[Cell],
+    *,
+    allocate_id: Callable[[], int],
+) -> list[TrackedCell]:
+    """Associate this frame's ``curr`` cells with prior tracks (each with its own age).
+
+    Returns one :class:`TrackedCell` per ``curr`` cell, in the same order. Each
+    candidate is predicted forward by **its own** ``age_s`` (so a track coasting through
+    a missed frame is matched at where it should now be), with a per-candidate search
+    radius. A matched cell inherits the candidate's ``track_id`` and an EMA-smoothed
+    motion (measured over that age, so a resumed track keeps moving); an unmatched cell
+    gets a fresh id and zero motion; an unmatched candidate's track simply ends. With no
+    usable candidate (none, or all non-positive age), every cell starts a new track.
     """
     if not curr:
         return []
-    if not prev or dt_s <= 0:
+    usable = [c for c in prev if c.age_s > 0]
+    if not usable:
         return [TrackedCell(c, allocate_id(), 0.0, 0.0) for c in curr]
 
-    # Cost matrix: ground distance from each prev's predicted position to each curr.
-    pred = [_predict_forward(tc, dt_s) for tc in prev]
-    cost = np.empty((len(prev), len(curr)), dtype=np.float64)
+    # Cost matrix: ground distance from each candidate's predicted spot to each curr.
+    pred = [_predict_forward(c.track, c.age_s) for c in usable]
+    cost = np.empty((len(usable), len(curr)), dtype=np.float64)
     for i, (plon, plat) in enumerate(pred):
         for j, c in enumerate(curr):
             _az, dist = geodesic_between(plon, plat, c.centroid_lon, c.centroid_lat)
             cost[i, j] = dist
 
-    radius = max(MIN_RADIUS_M, MAX_SPEED_MS * dt_s)
+    # Per-candidate search radius: an older (coasting) track may have moved farther.
+    radii = [max(MIN_RADIUS_M, MAX_SPEED_MS * c.age_s) for c in usable]
     row_ind, col_ind = linear_sum_assignment(cost)
-    # curr index → prev index, keeping only assignments within the search radius.
+    # curr index → candidate index, keeping assignments within that candidate's radius.
     matched: dict[int, int] = {
         int(j): int(i)
         for i, j in zip(row_ind, col_ind, strict=True)
-        if cost[i, j] <= radius
+        if cost[i, j] <= radii[i]
     }
 
     result: list[TrackedCell] = []
@@ -113,11 +147,12 @@ def associate(
         if j not in matched:
             result.append(TrackedCell(c, allocate_id(), 0.0, 0.0))
             continue
-        p = prev[matched[j]]
-        # Measured step velocity from the actual (not predicted) prior centroid.
+        cand = usable[matched[j]]
+        p = cand.track
+        # Measured step velocity from the actual prior centroid over the cand's age.
         mu, mv = _velocity(
             p.cell.centroid_lon, p.cell.centroid_lat,
-            c.centroid_lon, c.centroid_lat, dt_s,
+            c.centroid_lon, c.centroid_lat, cand.age_s,
         )
         if math.hypot(p.u_ms, p.v_ms) == 0.0:
             u, v = mu, mv  # first continuation: no prior motion to blend
