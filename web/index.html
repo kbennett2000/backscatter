@@ -113,6 +113,26 @@
           Estimated cell motion — not a nowcast, not for life safety.
         </p>
       </div>
+      <div id="archivesettings">
+        <h3>Archive retention</h3>
+        <form id="retentionform">
+          <label class="setting"
+            ><span>Keep frames for (days)</span>
+            <input id="rt-days" type="number" min="0" step="any" placeholder="off"
+          /></label>
+          <label class="setting"
+            ><span>Max archive size (GB)</span>
+            <input id="rt-gb" type="number" min="0" step="any" placeholder="off"
+          /></label>
+          <button id="rt-save" type="submit">Save retention</button>
+          <div id="retentionerror" class="err"></div>
+        </form>
+        <p class="setting-note">
+          Blank = no limit. Frames are removed when older than the age limit or when the
+          archive passes the size cap. Both blank = keep everything (the disk fills
+          eventually). Changes apply on the next cleanup pass.
+        </p>
+      </div>
     </div>
     <div id="timeline" hidden>
       <button id="play" type="button" aria-label="Play/pause">▶</button>
@@ -144,6 +164,7 @@
     <script src="/static/stormtracks.js"></script>
     <script src="/static/viewport.js"></script>
     <script src="/static/recolor.js"></script>
+    <script src="/static/retention.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>

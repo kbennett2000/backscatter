@@ -383,19 +383,22 @@ body {
   min-height: 1em;
 }
 
-/* Display settings (radar opacity, basemap) live below the Locations form. */
-#displaysettings {
+/* Display + archive settings live below the Locations form (same look). */
+#displaysettings,
+#archivesettings {
   margin-top: 12px;
   padding-top: 8px;
   border-top: 1px solid var(--border-strong);
 }
 
-#displaysettings h3 {
+#displaysettings h3,
+#archivesettings h3 {
   margin: 0 0 8px;
   font-size: 13px;
 }
 
-#displaysettings .setting {
+#displaysettings .setting,
+#archivesettings .setting {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -412,7 +415,22 @@ body {
   font: inherit;
 }
 
-#displaysettings .setting-note {
+#archivesettings .setting input[type="number"] {
+  width: 9ch;
+}
+
+#archivesettings #rt-save {
+  margin-top: 2px;
+}
+
+#archivesettings .err {
+  color: var(--error);
+  min-height: 1em;
+  margin-top: 4px;
+}
+
+#displaysettings .setting-note,
+#archivesettings .setting-note {
   margin: -2px 0 8px;
   font-size: 11px;
   color: var(--muted);

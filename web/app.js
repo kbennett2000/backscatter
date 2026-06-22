@@ -56,6 +56,10 @@ const basemapSelect = $("basemap");
 const tracksToggle = $("tracks");
 const clearAirToggle = $("clearair");
 const paletteSelect = $("palette");
+const retentionForm = $("retentionform");
+const rtDays = $("rt-days");
+const rtGb = $("rt-gb");
+const retentionError = $("retentionerror");
 const locpanel = $("locpanel");
 const loclist = $("loclist");
 const locform = $("locform");
@@ -232,6 +236,46 @@ async function submitForm(ev) {
   }
   startAdd();
   await refreshLocations();
+}
+
+// --- archive retention (Slice 29b) ------------------------------------------
+// DB-backed policy (ADR-0013); the form GETs the current values and PUTs edits.
+// Blank field = that limit off. Server validation is authoritative.
+
+async function refreshRetention() {
+  retentionError.textContent = "";
+  try {
+    const r = await fetch("/api/retention");
+    if (!r.ok) return;
+    const d = await r.json();
+    rtDays.value = d.max_age_days ?? "";
+    rtGb.value = d.max_size_gb ?? "";
+  } catch (e) {
+    /* offline / transient — leave the form as-is */
+  }
+}
+
+async function submitRetention(ev) {
+  ev.preventDefault();
+  retentionError.textContent = "";
+  let body;
+  try {
+    body = retentionBody(rtDays.value, rtGb.value); // blank → null; guards bad input
+  } catch (e) {
+    retentionError.textContent = e.message;
+    return;
+  }
+  const resp = await fetch("/api/retention", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    retentionError.textContent = data.detail || `error ${resp.status}`;
+    return;
+  }
+  await refreshRetention(); // reflect what the server stored (e.g. 0 days → blank)
 }
 
 async function deleteLocation(id) {
@@ -1089,6 +1133,7 @@ function wireControls() {
       windowctl.classList.remove("open"); // mobile: one drawer at a time
       startAdd();
       renderLocList();
+      refreshRetention(); // load current archive-retention values into the form
     }
   });
   themeBtn.addEventListener("click", () =>
@@ -1144,6 +1189,7 @@ function wireControls() {
     if (!isMobile(window.innerWidth)) windowctl.classList.remove("open");
   });
   locform.addEventListener("submit", submitForm);
+  retentionForm.addEventListener("submit", submitRetention);
   $("lf-reset").addEventListener("click", startAdd);
   $("lf-pick").addEventListener("click", () => {
     state.picking = true;
