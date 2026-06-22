@@ -138,6 +138,27 @@ def capture(url: str, out: Path) -> None:
         page = ctx.new_page()
         page.goto(url, wait_until="load")
         _ready(page)
+        # The hero/readout shots open on the latest frame by default. If that frame is
+        # quiet, set BACKSCATTER_DOCS_HERO_AT (ISO scan_time) to land on a livelier one
+        # (e.g. the archive's peak-storm frame) for a screenshot that actually shines.
+        hero_at = os.environ.get("BACKSCATTER_DOCS_HERO_AT")
+        if hero_at:
+            page.evaluate(
+                """(t) => {
+                    const a = Date.parse(t);
+                    let best = -1, bd = Infinity;
+                    state.frames.forEach((f, i) => {
+                        const d = Math.abs(Date.parse(f.scan_time) - a);
+                        if (d < bd) { bd = d; best = i; }
+                    });
+                    if (best >= 0 && typeof goTo === 'function') {
+                        if (typeof pause === 'function') pause();
+                        goTo(best);
+                    }
+                }""",
+                hero_at,
+            )
+            page.wait_for_timeout(3500)  # let the radar image fetch + paint
         page.screenshot(path=out / "app-overview.png")
         print("  png: app-overview.png")
         # Dark mode (Slice 21): toggle, wait for the dark basemap + re-added radar
@@ -185,29 +206,53 @@ def capture(url: str, out: Path) -> None:
             _ready(pg)
             return pg
 
-        # playback: loop the LONGEST gap-free run of frames, so the storm moves
-        # continuously instead of teleporting across a collection gap (that time-jump,
-        # not blank frames, is what reads as "missing radar"). Picking the most recent
-        # N frames is wrong when the tail is sparse/gappy — we segment on state.gaps and
-        # take the densest contiguous stretch, capped to ~18 frames (its latest part).
+        # playback: loop a smooth, gap-free, weather-rich stretch.
+        #
+        # Two failure modes to avoid: (1) crossing a collection gap, so the storm
+        # teleports (a time-jump, not blank frames — that's what reads as "missing
+        # radar"); (2) landing on a sparse/clear stretch with nothing to watch. By
+        # default we segment on state.gaps and loop the LONGEST contiguous run (its
+        # latest ~18 frames). For a punchier loop, set BACKSCATTER_DOCS_PLAYBACK_FROM/
+        # _TO (ISO scan_times) to pin the window to a specific active stretch — pick it
+        # with: analyse data/renders/<site>/*.png for peak high-dBZ coverage.
         pg = fresh()
-        win = pg.evaluate(
-            """() => {
-                const n = state.frames.length;
-                const bounds = (state.gaps || []).map(g => g.afterIndex)
-                    .sort((a, b) => a - b);
-                const starts = [0, ...bounds.map(b => b + 1)];
-                const ends = [...bounds, n - 1];        // inclusive segment ends
-                let best = [0, n - 1], bestLen = -1;
-                for (let i = 0; i < starts.length; i++) {
-                    const len = ends[i] - starts[i] + 1;
-                    if (len > bestLen) { bestLen = len; best = [starts[i], ends[i]]; }
-                }
-                let [s, e] = best;
-                if (e - s + 1 > 18) s = e - 17;         // cap, keep the latest part
-                return [s, e + 1];                      // end-exclusive
-            }"""
-        )
+        pb_from = os.environ.get("BACKSCATTER_DOCS_PLAYBACK_FROM")
+        pb_to = os.environ.get("BACKSCATTER_DOCS_PLAYBACK_TO")
+        if pb_from and pb_to:
+            win = pg.evaluate(
+                """([from_, to_]) => {
+                    const a = Date.parse(from_), b = Date.parse(to_);
+                    let s = -1, e = -1;
+                    state.frames.forEach((f, i) => {
+                        const t = Date.parse(f.scan_time);
+                        if (t >= a && t <= b) { if (s < 0) s = i; e = i; }
+                    });
+                    if (s < 0) return [Math.max(0, state.frames.length - 18),
+                                       state.frames.length];
+                    return [s, e + 1];
+                }""",
+                [pb_from, pb_to],
+            )
+        else:
+            win = pg.evaluate(
+                """() => {
+                    const n = state.frames.length;
+                    const bounds = (state.gaps || []).map(g => g.afterIndex)
+                        .sort((a, b) => a - b);
+                    const starts = [0, ...bounds.map(b => b + 1)];
+                    const ends = [...bounds, n - 1];        // inclusive segment ends
+                    let best = [0, n - 1], bestLen = -1;
+                    for (let i = 0; i < starts.length; i++) {
+                        const len = ends[i] - starts[i] + 1;
+                        if (len > bestLen) {
+                            bestLen = len; best = [starts[i], ends[i]];
+                        }
+                    }
+                    let [s, e] = best;
+                    if (e - s + 1 > 18) s = e - 17;         // cap, keep the latest part
+                    return [s, e + 1];                      // end-exclusive
+                }"""
+            )
         start, end = int(win[0]), int(win[1])
         _record(pg, [_goto_frame(i) for i in range(start, end)],
                 out / "playback.gif", fps=8, width=960)
