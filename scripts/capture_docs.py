@@ -185,19 +185,27 @@ def capture(url: str, out: Path) -> None:
             _ready(pg)
             return pg
 
-        # playback: loop the most recent ~16 frames smoothly. Keep the window to a
-        # single contiguous run (don't start it mid-gap) so the loop reads as continuous
-        # motion, not a time-jump.
+        # playback: loop the LONGEST gap-free run of frames, so the storm moves
+        # continuously instead of teleporting across a collection gap (that time-jump,
+        # not blank frames, is what reads as "missing radar"). Picking the most recent
+        # N frames is wrong when the tail is sparse/gappy — we segment on state.gaps and
+        # take the densest contiguous stretch, capped to ~18 frames (its latest part).
         pg = fresh()
         win = pg.evaluate(
             """() => {
                 const n = state.frames.length;
-                const gaps = (state.gaps || []).map(g => g.afterIndex);
-                let lo = 0;
-                for (const gi of gaps) { if (gi < n - 1) lo = Math.max(lo, gi + 1); }
-                let start = Math.max(lo, n - 16);
-                if (n - start < 8) start = Math.max(0, n - 16); // enough for a loop
-                return [start, n];
+                const bounds = (state.gaps || []).map(g => g.afterIndex)
+                    .sort((a, b) => a - b);
+                const starts = [0, ...bounds.map(b => b + 1)];
+                const ends = [...bounds, n - 1];        // inclusive segment ends
+                let best = [0, n - 1], bestLen = -1;
+                for (let i = 0; i < starts.length; i++) {
+                    const len = ends[i] - starts[i] + 1;
+                    if (len > bestLen) { bestLen = len; best = [starts[i], ends[i]]; }
+                }
+                let [s, e] = best;
+                if (e - s + 1 > 18) s = e - 17;         // cap, keep the latest part
+                return [s, e + 1];                      // end-exclusive
             }"""
         )
         start, end = int(win[0]), int(win[1])
