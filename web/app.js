@@ -268,8 +268,9 @@ async function main() {
   state.map = new maplibregl.Map({
     container: "map",
     style: basemapUrl(state.basemap),
-    center: [active.lon, active.lat],
-    zoom: 7,
+    // Open framed on the active location's radar coverage, not a fixed wide zoom.
+    bounds: coverageBounds(active.lat, active.lon),
+    fitBoundsOptions: { padding: 24 },
   });
   state.map.addControl(new maplibregl.NavigationControl(), "top-right");
   state.map.on("load", init);
@@ -311,7 +312,7 @@ async function switchLocation(name) {
   state.site = loc.site;
   localStorage.setItem(LS_KEY, loc.name);
   refreshLocationMarkers(); // restyle which pin is highlighted as active
-  state.map.flyTo({ center: [loc.lon, loc.lat], zoom: 7 });
+  state.map.fitBounds(coverageBounds(loc.lat, loc.lon), { padding: 24 });
   await refreshExtent();
   await loadDefault(); // re-point the timeline at this location's recent window
 }
