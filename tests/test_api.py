@@ -92,16 +92,17 @@ def _seed_cells(
 
     if cells is None:
         cells = [
-            # A fast mover (east 20 m/s) + a stationary cell (no motion → no arrow).
+            # A fast mover (east 20 m/s) on an established track (n_obs ≥ 3, so its
+            # motion is drawn) + a stationary cell (no motion → no arrow).
             TrackedCell(
                 Cell(centroid_lon=-104.5, centroid_lat=39.8, max_dbz=58.0,
                      area_km2=240.0),
-                track_id=1, u_ms=20.0, v_ms=0.0,
+                track_id=1, u_ms=20.0, v_ms=0.0, n_obs=3,
             ),
             TrackedCell(
                 Cell(centroid_lon=-103.9, centroid_lat=39.6, max_dbz=44.0,
                      area_km2=30.0),
-                track_id=2, u_ms=0.0, v_ms=0.0,
+                track_id=2, u_ms=0.0, v_ms=0.0, n_obs=3,
             ),
         ]
     conn = db.connect(config.db_path)
@@ -123,18 +124,47 @@ def test_api_cells_returns_frame_cells(tmp_path: Path) -> None:
     ).json()
     assert body["site"] == "KFTG"
     assert len(body["tracks"]) == 2
-    # Strongest dBZ first; the mover has a projected endpoint + heading ~east (90°).
+    # Strongest dBZ first; the mover has a heading ~east (90°) — the overlay draws the
+    # arrow itself from speed+bearing, so the payload carries motion, not an endpoint.
     mover = body["tracks"][0]
     assert mover["track_id"] == 1
     assert mover["max_dbz"] == pytest.approx(58.0)
     assert mover["speed_kmh"] == pytest.approx(72.0, abs=0.5)  # 20 m/s
     assert mover["bearing_deg"] == pytest.approx(90.0, abs=0.5)
-    assert mover["proj_lon"] is not None
-    assert mover["proj_lon"] > mover["lon"]  # projected east of the cell
-    # The stationary cell: no projection (no zero-length arrow).
+    assert "proj_lon" not in mover and "proj_lat" not in mover
+    # The stationary cell: no heading → marker only, no arrow.
     still = body["tracks"][1]
     assert still["track_id"] == 2
-    assert still["proj_lon"] is None and still["proj_lat"] is None
+    assert still["bearing_deg"] is None
+
+
+def test_api_cells_young_track_draws_no_vector(tmp_path: Path) -> None:
+    """A moving cell whose track has too few observations (Slice 28f, n_obs < 3) shows
+    as a marker only — no heading — so a one-frame mismatch fluke draws no arrow."""
+    from backscatter.track.associate import TrackedCell
+    from backscatter.track.detect import Cell
+
+    config = _config(tmp_path)
+    _seed_frame(config)
+    # Two equally fast movers; only the established one (n_obs ≥ 3) gets a heading.
+    young = TrackedCell(
+        Cell(centroid_lon=-104.5, centroid_lat=39.8, max_dbz=58.0, area_km2=99.0),
+        track_id=1, u_ms=20.0, v_ms=0.0, n_obs=2,
+    )
+    established = TrackedCell(
+        Cell(centroid_lon=-104.0, centroid_lat=39.8, max_dbz=50.0, area_km2=40.0),
+        track_id=2, u_ms=20.0, v_ms=0.0, n_obs=3,
+    )
+    _seed_cells(config, cells=[young, established])
+    client = TestClient(create_app(config))
+
+    tracks = client.get(
+        "/api/cells", params={"site": "KFTG", "scan_time": "2026-06-20T21:51:07Z"}
+    ).json()["tracks"]
+    by_id = {t["track_id"]: t for t in tracks}
+    assert by_id[1]["bearing_deg"] is None  # young → marker only
+    assert by_id[1]["speed_kmh"] == pytest.approx(72.0, abs=0.5)  # speed still reported
+    assert by_id[2]["bearing_deg"] == pytest.approx(90.0, abs=0.5)  # established: drawn
 
 
 def test_api_cells_only_that_frame(tmp_path: Path) -> None:

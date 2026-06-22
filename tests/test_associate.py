@@ -113,6 +113,58 @@ def test_beyond_radius_jump_is_not_linked() -> None:
     assert out.track_id == 900  # new track, not a 333 m/s "continuation"
 
 
+# --- true speed ceiling (Slice 28f D): the MIN_RADIUS_M floor must not admit a match
+# whose implied speed exceeds MAX_SPEED_MS at short (SAILS) Δt -----------------------
+
+DT_SHORT = 100.0  # a short intra-volume (SAILS) cadence
+
+
+def test_within_radius_floor_but_impossible_speed_is_rejected() -> None:
+    # At Δt=100 s the search radius is the 5 km floor (30 m/s × 100 s = 3 km < 5 km).
+    # A 4 km step is *inside* the floor but implies 40 m/s — above the cap. It must not
+    # link into the track (that's the bug that produced screen-spanning vectors).
+    prev = [TrackedCell(_cell(LON0, LAT0), track_id=7, u_ms=0.0, v_ms=0.0)]
+    step = 4_000.0
+    assert step <= MIN_RADIUS_M  # inside the floor, so the old radius gate matched it
+    assert step / DT_SHORT > MAX_SPEED_MS  # but it implies an impossible storm speed
+    curr = [_moved(LON0, LAT0, 90.0, step)]
+    (out,) = associate(prev, curr, DT_SHORT, allocate_id=_ids(900))
+    assert out.track_id == 900  # fresh track, not a 40 m/s "continuation"
+    assert (out.u_ms, out.v_ms) == (0.0, 0.0)
+
+
+def test_within_radius_floor_and_plausible_speed_still_matches() -> None:
+    # Same short Δt, but a 2 km step → 20 m/s (under the cap): a normal continuation.
+    prev = [TrackedCell(_cell(LON0, LAT0), track_id=7, u_ms=0.0, v_ms=0.0)]
+    (out,) = associate(
+        prev, [_moved(LON0, LAT0, 90.0, 2_000.0)], DT_SHORT, allocate_id=_ids(900)
+    )
+    assert out.track_id == 7
+    assert out.u_ms == pytest.approx(20.0, abs=0.1)
+
+
+# --- N-frame observation count (Slice 28f E) ----------------------------------------
+
+
+def test_n_obs_increments_on_continuation() -> None:
+    prev = [TrackedCell(_cell(LON0, LAT0), track_id=7, u_ms=0.0, v_ms=0.0, n_obs=2)]
+    curr = [_moved(LON0, LAT0, 90.0, 6_000.0)]
+    (out,) = associate(prev, curr, DT, allocate_id=_ids())
+    assert out.track_id == 7
+    assert out.n_obs == 3  # 2 → 3 on this continuation
+
+
+def test_n_obs_is_one_for_new_and_for_rejected_teleport() -> None:
+    # A brand-new cell starts at 1...
+    (new,) = associate([], [_cell(LON0, LAT0)], DT, allocate_id=_ids(42))
+    assert new.n_obs == 1
+    # ...and a speed-ceiling rejection (D) is a fresh track, so it resets to 1 too.
+    prev = [TrackedCell(_cell(LON0, LAT0), track_id=7, u_ms=0.0, v_ms=0.0, n_obs=5)]
+    teleport = [_moved(LON0, LAT0, 90.0, 4_000.0)]
+    (rej,) = associate(prev, teleport, DT_SHORT, allocate_id=_ids(900))
+    assert rej.track_id == 900 and rej.n_obs == 1
+
+
 def test_zero_dt_starts_fresh_tracks() -> None:
     prev = [TrackedCell(_cell(LON0, LAT0), track_id=7, u_ms=0.0, v_ms=0.0)]
     (out,) = associate(prev, [_cell(LON0, LAT0)], 0.0, allocate_id=_ids(800))

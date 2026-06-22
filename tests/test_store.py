@@ -183,6 +183,33 @@ def test_migration_adds_source_column_to_pre_26b_db(tmp_path: Path) -> None:
     assert db.volume_exists(conn, "KFTG", scan)
 
 
+def test_migration_adds_n_obs_column_to_pre_28f_db(tmp_path: Path) -> None:
+    # A pre-Slice-28f DB: a cells table without the n_obs column, with one existing row.
+    path = tmp_path / "pre28f.db"
+    raw = sqlite3.connect(path)
+    raw.executescript(
+        "CREATE TABLE cells (id INTEGER PRIMARY KEY, site TEXT NOT NULL, "
+        "scan_time TEXT NOT NULL, centroid_lon REAL NOT NULL, centroid_lat REAL "
+        "NOT NULL, max_dbz REAL NOT NULL, area_km2 REAL NOT NULL, track_id INTEGER, "
+        "u_ms REAL, v_ms REAL);"
+    )
+    raw.execute(
+        "INSERT INTO cells (site, scan_time, centroid_lon, centroid_lat, max_dbz, "
+        "area_km2, track_id, u_ms, v_ms) VALUES "
+        "('KFTG', '2026-06-20T00:00:00+00:00', -104.5, 39.8, 55.0, 20.0, 1, 5.0, 0.0)"
+    )
+    raw.commit()
+    raw.close()
+
+    conn = db.connect(path)
+    db.init_db(conn)  # should ALTER in the `n_obs` column
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(cells)")}
+    assert "n_obs" in cols
+    # The existing row reads back with the safe default (one observation) — no loss.
+    (row,) = conn.execute("SELECT n_obs FROM cells").fetchall()
+    assert row["n_obs"] == 1
+
+
 def test_source_helpers_record_query_and_upgrade(tmp_path: Path) -> None:
     conn = _conn(tmp_path)
     scan = datetime(2026, 6, 21, 21, 50, 0, tzinfo=UTC)

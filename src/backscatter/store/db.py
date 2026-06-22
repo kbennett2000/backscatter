@@ -52,7 +52,8 @@ CREATE TABLE IF NOT EXISTS cells (
     area_km2      REAL    NOT NULL,
     track_id      INTEGER,            -- persistent cell id (28b); NULL until associated
     u_ms          REAL,               -- eastward motion, m/s (28b)
-    v_ms          REAL                -- northward motion, m/s (28b)
+    v_ms          REAL,               -- northward motion, m/s (28b)
+    n_obs         INTEGER NOT NULL DEFAULT 1  -- track observations: birth+conts (28f)
 );
 CREATE INDEX IF NOT EXISTS idx_cells_frame ON cells(site, scan_time);
 
@@ -98,6 +99,13 @@ _SOURCE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("source", "TEXT NOT NULL DEFAULT 'assembled'"),
 )
 
+# The per-track observation count (Slice 28f), added by ALTER on pre-28f DBs. The
+# DEFAULT 1 reads every existing cell as a single observation, so an in-flight track
+# re-establishes its vector within a couple frames after deploy — safe, self-healing.
+_CELL_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("n_obs", "INTEGER NOT NULL DEFAULT 1"),
+)
+
 
 def connect(db_path: Path) -> sqlite3.Connection:
     """Open (creating parent dirs as needed) and return a connection."""
@@ -118,20 +126,21 @@ def connect(db_path: Path) -> sqlite3.Connection:
 
 
 def _add_missing_columns(
-    conn: sqlite3.Connection, columns: tuple[tuple[str, str], ...]
+    conn: sqlite3.Connection, table: str, columns: tuple[tuple[str, str], ...]
 ) -> None:
-    """Idempotently ALTER in any of ``columns`` not already on ``volumes``."""
-    existing = {row["name"] for row in conn.execute("PRAGMA table_info(volumes)")}
+    """Idempotently ALTER in any of ``columns`` not already on ``table``."""
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
     for name, decl in columns:
         if name not in existing:
-            conn.execute(f"ALTER TABLE volumes ADD COLUMN {name} {decl}")
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
 
 def init_db(conn: sqlite3.Connection) -> None:
     """Create the schema (and migrate old DBs) if needed. Idempotent."""
     conn.executescript(_SCHEMA)
-    _add_missing_columns(conn, _RENDER_COLUMNS)  # pre-Slice-5 DBs
-    _add_missing_columns(conn, _SOURCE_COLUMNS)  # pre-Slice-26b DBs
+    _add_missing_columns(conn, "volumes", _RENDER_COLUMNS)  # pre-Slice-5 DBs
+    _add_missing_columns(conn, "volumes", _SOURCE_COLUMNS)  # pre-Slice-26b DBs
+    _add_missing_columns(conn, "cells", _CELL_COLUMNS)  # pre-Slice-28f DBs
     conn.commit()
 
 
@@ -308,8 +317,8 @@ def record_cells(
     conn.executemany(
         "INSERT INTO cells "
         "(site, scan_time, centroid_lon, centroid_lat, max_dbz, area_km2, "
-        "track_id, u_ms, v_ms) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "track_id, u_ms, v_ms, n_obs) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 site,
@@ -321,6 +330,7 @@ def record_cells(
                 tc.track_id,
                 tc.u_ms,
                 tc.v_ms,
+                tc.n_obs,
             )
             for tc in cells
         ],
@@ -338,7 +348,7 @@ def cells_for_frame(
     try:
         return conn.execute(
             "SELECT centroid_lon, centroid_lat, max_dbz, area_km2, track_id, "
-            "u_ms, v_ms FROM cells WHERE site = ? AND scan_time = ? "
+            "u_ms, v_ms, n_obs FROM cells WHERE site = ? AND scan_time = ? "
             "ORDER BY max_dbz DESC",
             (site, scan_time.isoformat()),
         ).fetchall()
@@ -377,7 +387,7 @@ def active_tracks_for_coast(
     # selected alongside it — so this is each track's latest detection in the window.
     rows = conn.execute(
         "SELECT centroid_lon, centroid_lat, max_dbz, area_km2, track_id, u_ms, v_ms, "
-        "scan_time, MAX(scan_time) FROM cells "
+        "n_obs, scan_time, MAX(scan_time) FROM cells "
         "WHERE site = ? AND scan_time >= ? AND scan_time < ? AND track_id IS NOT NULL "
         "GROUP BY track_id",
         (site, oldest, scan_time.isoformat()),
@@ -394,6 +404,7 @@ def active_tracks_for_coast(
                 track_id=int(row["track_id"]),
                 u_ms=row["u_ms"] if row["u_ms"] is not None else 0.0,
                 v_ms=row["v_ms"] if row["v_ms"] is not None else 0.0,
+                n_obs=row["n_obs"] if row["n_obs"] is not None else 1,
             ),
             datetime.fromisoformat(str(row["scan_time"])),
         )

@@ -13,18 +13,24 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from backscatter.render.geometry import ground_destination
 from backscatter.store import db
 
 RENDERS_SUBDIR = "renders"
 
 # How far ahead the estimated-motion vector projects a cell, in minutes. The drawn
 # arrow runs from the cell to where its current motion would carry it in this long,
-# so the arrow's length encodes speed. Estimation only — not a nowcast.
+# so the arrow's length encodes speed. Estimation only — not a nowcast. This is the
+# single source of truth for the horizon; the overlay (web/stormtracks.js) draws the
+# arrow itself and mirrors this value (TICK_COUNT × TICK_INTERVAL_MIN).
 PROJECTION_MINUTES = 30.0
 # Below this ground speed a cell is treated as stationary (new tracks have zero
-# motion until a second frame); no projection endpoint, so no zero-length arrow.
+# motion until a second frame); bearing is nulled so no zero-length arrow is drawn.
 _MIN_MOTION_MS = 0.5
+# How many observations (births + continuations) a track needs before its motion is
+# trusted enough to draw a vector (Slice 28f). 3 = birth + 2 measured steps, so the
+# EMA has blended ≥2 steps and a single first-step fluke never draws a full arrow; the
+# marker still shows. Below this, bearing is nulled (marker only).
+_MIN_TRACK_OBS = 3
 
 # How many frames /api/frames returns by default, and the hard ceiling. The
 # timeline window is bounded by "most recent N" rather than handing back an
@@ -123,41 +129,34 @@ def frames_extent(
     return db.frames_extent(conn, site=site)
 
 
-def cell_payload(
-    row: sqlite3.Row, *, horizon_min: float = PROJECTION_MINUTES
-) -> dict[str, object]:
+def cell_payload(row: sqlite3.Row) -> dict[str, object]:
     """Shape one stored cell row for the map overlay (Slice 28c).
 
     Derives display fields from the stored ground velocity ``(u_ms east, v_ms north)``:
-    speed (km/h) and bearing (deg cw from north, the direction the cell is *heading*),
-    plus a projected endpoint ``horizon_min`` ahead computed with the same tested
-    geodesic the renderer uses (``ground_destination``) — not a flat-earth guess.
-    A near-stationary cell gets ``proj_lon/proj_lat = None`` (no arrow drawn).
+    speed (km/h) and bearing (deg cw from north, the direction the cell is *heading*).
+    The overlay (``web/stormtracks.js``) draws the vector itself from speed+bearing over
+    the ``PROJECTION_MINUTES`` horizon, so the backend returns motion, not an endpoint.
+
+    A near-stationary cell, or one whose track has too few observations to trust its
+    motion yet, gets ``bearing_deg = None`` so no arrow is drawn — just the marker.
     """
     u = row["u_ms"] if row["u_ms"] is not None else 0.0
     v = row["v_ms"] if row["v_ms"] is not None else 0.0
-    lon, lat = row["centroid_lon"], row["centroid_lat"]
     speed = math.hypot(u, v)
+    n_obs = row["n_obs"] if row["n_obs"] is not None else 1
 
-    proj_lon: float | None = None
-    proj_lat: float | None = None
     bearing: float | None = None
-    if speed >= _MIN_MOTION_MS:
+    if speed >= _MIN_MOTION_MS and n_obs >= _MIN_TRACK_OBS:
         bearing = math.degrees(math.atan2(u, v)) % 360.0  # u=east, v=north → cw-N
-        proj_lon, proj_lat = ground_destination(
-            lat, lon, bearing, speed * horizon_min * 60.0
-        )
 
     return {
         "track_id": row["track_id"],
-        "lon": lon,
-        "lat": lat,
+        "lon": row["centroid_lon"],
+        "lat": row["centroid_lat"],
         "max_dbz": row["max_dbz"],
         "area_km2": row["area_km2"],
         "speed_kmh": round(speed * 3.6, 1),
         "bearing_deg": round(bearing, 1) if bearing is not None else None,
-        "proj_lon": proj_lon,
-        "proj_lat": proj_lat,
     }
 
 

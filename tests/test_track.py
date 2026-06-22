@@ -151,6 +151,41 @@ def test_record_cells_round_trip(tmp_path: Path) -> None:
     assert rows[0]["v_ms"] == pytest.approx(-3.0)
 
 
+def test_record_cells_round_trips_n_obs(tmp_path: Path) -> None:
+    """The per-track observation count (Slice 28f) survives store → read-back."""
+    conn = _conn(tmp_path)
+    scan = datetime(2026, 6, 20, 21, 51, 7, tzinfo=UTC)
+    cell = Cell(centroid_lon=-104.5, centroid_lat=39.8, max_dbz=60.0, area_km2=30.0)
+    db.record_cells(
+        conn,
+        site="KFTG",
+        scan_time=scan,
+        cells=[TrackedCell(cell, track_id=1, u_ms=5.0, v_ms=0.0, n_obs=4)],
+    )
+
+    (row,) = db.cells_for_frame(conn, site="KFTG", scan_time=scan)
+    assert row["n_obs"] == 4
+
+
+def test_active_tracks_for_coast_feeds_back_n_obs(tmp_path: Path) -> None:
+    """A candidate offered for the next frame carries its stored n_obs (so the count
+    keeps climbing across collect cycles instead of resetting to 1)."""
+    conn = _conn(tmp_path)
+    f1 = datetime(2026, 6, 20, 21, 50, tzinfo=UTC)
+    f2 = datetime(2026, 6, 20, 21, 55, tzinfo=UTC)
+    cell = Cell(centroid_lon=-104.5, centroid_lat=39.8, max_dbz=50.0, area_km2=20.0)
+    db.record_cells(
+        conn,
+        site="KFTG",
+        scan_time=f1,
+        cells=[TrackedCell(cell, track_id=1, u_ms=10.0, v_ms=0.0, n_obs=3)],
+    )
+    ((tc, _seen),) = db.active_tracks_for_coast(
+        conn, site="KFTG", scan_time=f2, max_frames=2
+    )
+    assert tc.n_obs == 3
+
+
 def test_record_cells_replaces_not_appends(tmp_path: Path) -> None:
     """A re-render of the same frame must replace its cells, not duplicate them."""
     conn = _conn(tmp_path)

@@ -46,6 +46,7 @@ class TrackedCell:
     track_id: int
     u_ms: float  # ground velocity east, m/s
     v_ms: float  # ground velocity north, m/s
+    n_obs: int = 1  # times this track has been observed (birth + continuations, 28f)
 
 
 @dataclass(frozen=True)
@@ -154,11 +155,17 @@ def associate_candidates(
             p.cell.centroid_lon, p.cell.centroid_lat,
             c.centroid_lon, c.centroid_lat, cand.age_s,
         )
+        # True velocity ceiling (Slice 28f): the MIN_RADIUS_M floor can admit a match
+        # whose implied speed exceeds MAX_SPEED_MS at short (SAILS) Δt. Such a step is a
+        # different storm, not a 100+ km/h continuation — start a fresh track instead.
+        if math.hypot(mu, mv) > MAX_SPEED_MS:
+            result.append(TrackedCell(c, allocate_id(), 0.0, 0.0))
+            continue
         if math.hypot(p.u_ms, p.v_ms) == 0.0:
             u, v = mu, mv  # first continuation: no prior motion to blend
         else:
             a = MOTION_SMOOTHING
             u = a * mu + (1.0 - a) * p.u_ms
             v = a * mv + (1.0 - a) * p.v_ms
-        result.append(TrackedCell(c, p.track_id, u, v))
+        result.append(TrackedCell(c, p.track_id, u, v, n_obs=p.n_obs + 1))
     return result
