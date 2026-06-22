@@ -246,12 +246,17 @@ async function refreshRetention() {
   retentionError.textContent = "";
   try {
     const r = await fetch("/api/retention");
-    if (!r.ok) return;
+    if (!r.ok) {
+      // Don't fail silently: a non-200 (e.g. a stale server missing the endpoint)
+      // would otherwise leave the fields blank and look like the saved values vanished.
+      retentionError.textContent = `Couldn't load retention settings (HTTP ${r.status})`;
+      return;
+    }
     const d = await r.json();
     rtDays.value = d.max_age_days ?? "";
     rtGb.value = d.max_size_gb ?? "";
   } catch (e) {
-    /* offline / transient — leave the form as-is */
+    retentionError.textContent = "Couldn't reach the server to load retention settings.";
   }
 }
 

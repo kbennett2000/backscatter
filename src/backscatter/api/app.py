@@ -16,6 +16,8 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.responses import Response
+from starlette.types import Scope
 
 from backscatter.api.frames import (
     DEFAULT_FRAMES_LIMIT,
@@ -116,6 +118,25 @@ class BackfillStart(BaseModel):
 # Frontend lives at the repo-level web/ dir (self-hosted from source). Resolve it
 # relative to this file: src/backscatter/api/app.py -> repo root.
 _DEFAULT_WEB_DIR = Path(__file__).resolve().parents[3] / "web"
+
+# Browser cache policy for the frontend. The app's HTML/JS/CSS are baked into the
+# image at build time and have no content-hashed filenames, so a stale browser cache
+# would keep serving last deploy's JS against the new server — exactly the failure that
+# made the retention form look broken. ``no-cache`` doesn't disable caching; it forces
+# the browser to revalidate (If-None-Match/If-Modified-Since) before reusing a file, so
+# a deploy is picked up immediately (cheap 304s on a LAN) while unchanged files still
+# cache. Rendered PNGs are immutable (keyed by scan_time) and stay long-cacheable.
+_NO_CACHE = "no-cache"
+
+
+class _RevalidatingStatic(StaticFiles):
+    """StaticFiles that tags every response ``Cache-Control: no-cache`` so the browser
+    always revalidates the frontend assets and a deploy is never masked by the cache."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = _NO_CACHE
+        return response
 
 
 def create_app(
@@ -385,7 +406,9 @@ def create_app(
 
     @app.get("/")
     def index() -> FileResponse:
-        return FileResponse(web / "index.html")
+        # no-cache so a deploy's new index.html (and the asset URLs it references) is
+        # always revalidated rather than served stale from the browser cache.
+        return FileResponse(web / "index.html", headers={"Cache-Control": _NO_CACHE})
 
     # Rendered PNGs (may not exist yet — don't fail app construction).
     app.mount(
@@ -393,6 +416,8 @@ def create_app(
         StaticFiles(directory=renders, check_dir=False),
         name="renders",
     )
-    app.mount("/static", StaticFiles(directory=web, check_dir=False), name="static")
+    app.mount(
+        "/static", _RevalidatingStatic(directory=web, check_dir=False), name="static"
+    )
 
     return app

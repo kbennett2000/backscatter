@@ -191,6 +191,21 @@ def test_api_cells_bad_timestamp_is_400(tmp_path: Path) -> None:
     assert resp.status_code == 400
 
 
+def test_frontend_assets_are_revalidated_renders_are_cacheable(tmp_path: Path) -> None:
+    """index.html + /static/* carry Cache-Control: no-cache so a deploy is never masked
+    by a stale browser cache; immutable rendered PNGs stay long-cacheable."""
+    config = _config(tmp_path)
+    _seed_frame(config, write_png=True)
+    client = TestClient(create_app(config))
+
+    assert client.get("/").headers.get("cache-control") == "no-cache"
+    assert client.get("/static/app.js").headers.get("cache-control") == "no-cache"
+    # A rendered PNG must NOT be forced to revalidate (immutable, keyed by scan_time).
+    png = client.get("/renders/KFTG/KFTG20260620_215107_V06.png")
+    assert png.status_code == 200
+    assert png.headers.get("cache-control") != "no-cache"
+
+
 def test_latest_frame_none_when_empty(tmp_path: Path) -> None:
     conn = db.connect(tmp_path / "data" / "db.sqlite")
     db.init_db(conn)
