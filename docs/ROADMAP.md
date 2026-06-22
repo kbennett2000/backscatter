@@ -432,7 +432,7 @@ dropped. Surface **every** 0.5° surveillance cut (base + SAILS/MRLE) as its own
   dual-source wiring + reconcile-skip; **merge gated on a RadarScope visual check on a live SAILS
   event** (per CLAUDE.md — a rendering change doesn't merge on "it produced frames").
 
-## Storm cell tracking (28a/28b/28c DONE — pending operator's RadarScope visual check)
+## Storm cell tracking (28a/28b/28c/28d DONE — pending operator's RadarScope visual check)
 RadarScope-style storm tracks. Library survey (TINT/tintX/tobac/Py-ART) concluded none fit
 our streaming, polar-sweep, small-image loop cleanly — each is batch-shaped, wants a grid type
 we don't hold, and is either fragile (TINT: alpha, git-only) or heavy (tintX pins `numpy<2.0`;
@@ -479,6 +479,21 @@ Tracking is *estimation*, framed in-UI as estimated motion, never a nowcast (not
   phone)** — markers on the right cells, vectors pointing the right way at sensible length, sane
   while scrubbing. Tests: `tests/test_api.py` (endpoint returns the frame's cells, projection for a
   mover / None for a stationary cell, 400 on bad timestamp) + `web/stormtracks.test.js`.
+- **Slice 28d — RadarScope-style time-tick cross-lines + arrowhead (done).** Frontend-only polish
+  on the 28c overlay; **no backend/algorithm change** (`/api/cells` already returns each cell's
+  `lon/lat/speed_kmh/bearing_deg`, and the existing MapLibre layers filter by geometry-type, so new
+  LineStrings render through them — `web/stormtracks.js` + its test are the only files touched).
+  `trackFeatures` now draws, per moving cell: the main vector, **perpendicular cross-line ticks at
+  15/30/45/60 min** (4 ticks, 60-min horizon — RadarScope's usual cadence; faster storm → ticks
+  farther apart = the time scale on the track), and a small **arrowhead** at the tip. Geometry uses
+  a small-distance equirectangular `forward(lon,lat,bearing,dist)` (cos-lat scaled; <1 km error at
+  ≤100 km, negligible vs the steady-velocity assumption), JS value-tested (due-E/N/wrapped bearings,
+  equal-time→equal-spacing, ⟂ orientation, 7-feature inventory). Same cyan + dark-casing styling;
+  stationary cells stay marker-only. Tunable consts (`TICK_INTERVAL_MIN`/`TICK_COUNT`/
+  `TICK_HALF_LEN_M`/arrow). Note: the renderer now recomputes the vector from speed+bearing (server's
+  geodesic `proj_*` retained in the API but unused for drawing). Honesty unchanged (estimated,
+  steady-motion, not a nowcast). 50 node tests. **Operator's on-phone RadarScope tick comparison
+  still pending.**
 
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher
