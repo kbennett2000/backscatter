@@ -408,6 +408,28 @@ frame 0.6 min old while the freshest assembled volume was 6.0 min old.
   + frontend unchanged (the live frame surfaces through the existing UI; the freshness cue just
   reads a much smaller age).
 
+## Intra-volume SAILS cuts (27a DONE, 27b next) — ADR-0012
+One frame per volume left backscatter ~5 min stale *between* volumes during precip, while
+RadarScope showed the mid-volume SAILS cuts. Confirmed live: backscatter correctly served its
+newest live frame, but that frame was the volume's base cut; a fresher SAILS cut was decoded and
+dropped. Surface **every** 0.5° surveillance cut (base + SAILS/MRLE) as its own frame, live-only.
+
+- **Slice 27a — multi-cut decode (done, hermetic, not wired).** `decode/volume.py` gains
+  `surveillance_sweeps(radar)` and `try_decode_all_lowest(bytes)`. Surveillance vs Doppler is
+  decided by "first sweep of each visit to the minimum elevation" (both split-cut halves carry
+  reflectivity in super-res, so presence can't distinguish them); each cut is stamped with its
+  own sweep start time (`time['units']` epoch + first-ray offset). The base cut stays
+  **byte-identical** to the prior `sweep_from_radar` (max abs diff 0.0 dBZ), so 26a/26b are
+  untouched. Correctness gate: value-based tests on a real captured KFTG SAILS layout
+  (`tests/fixtures/sails_KFTG_layout.npz`) + synthetic split-cut/SAILS layouts — selection
+  `[0, 9]`, Doppler twins excluded, times `00:24:20` / `00:26:44`, base == volume start. Real-bytes
+  spot-check confirmed 2 distinct cuts (71 dBZ apart) and the freeze progression.
+- **Slice 27b — live wiring (next).** The live chunks assembler keeps accumulating the volume and
+  surfaces each newly-frozen cut; base stays `source='live'` (reconciles as today), SAILS cuts get
+  `source='live-sails'` and stay permanent (no assembled object at their timestamp; reconcile's
+  `WHERE source='live'` skips them). No schema migration. Requires a visual check vs RadarScope on
+  a live SAILS event before merge.
+
 ## Later (not scheduled yet)
 - **Storm track lines / motion vectors** — parked as a real computer-vision effort (cell
   identification + tracking across frames), not a quick slice.
