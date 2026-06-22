@@ -78,6 +78,88 @@ def _seed_frame(
     return png_bytes
 
 
+def _seed_cells(
+    config: Config,
+    *,
+    site: str = "KFTG",
+    scan_time: str = "2026-06-20T21:51:07+00:00",
+    cells: list | None = None,
+) -> None:
+    """Store storm cells for a frame (Slice 28c overlay tests)."""
+    from backscatter.track.associate import TrackedCell
+    from backscatter.track.detect import Cell
+
+    if cells is None:
+        cells = [
+            # A fast mover (east 20 m/s) + a stationary cell (no motion → no arrow).
+            TrackedCell(
+                Cell(centroid_lon=-104.5, centroid_lat=39.8, max_dbz=58.0,
+                     area_km2=240.0),
+                track_id=1, u_ms=20.0, v_ms=0.0,
+            ),
+            TrackedCell(
+                Cell(centroid_lon=-103.9, centroid_lat=39.6, max_dbz=44.0,
+                     area_km2=30.0),
+                track_id=2, u_ms=0.0, v_ms=0.0,
+            ),
+        ]
+    conn = db.connect(config.db_path)
+    db.init_db(conn)
+    db.record_cells(
+        conn, site=site, scan_time=datetime.fromisoformat(scan_time), cells=cells
+    )
+    conn.close()
+
+
+def test_api_cells_returns_frame_cells(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed_frame(config)
+    _seed_cells(config)
+    client = TestClient(create_app(config))
+
+    body = client.get(
+        "/api/cells", params={"site": "KFTG", "scan_time": "2026-06-20T21:51:07Z"}
+    ).json()
+    assert body["site"] == "KFTG"
+    assert len(body["tracks"]) == 2
+    # Strongest dBZ first; the mover has a projected endpoint + heading ~east (90°).
+    mover = body["tracks"][0]
+    assert mover["track_id"] == 1
+    assert mover["max_dbz"] == pytest.approx(58.0)
+    assert mover["speed_kmh"] == pytest.approx(72.0, abs=0.5)  # 20 m/s
+    assert mover["bearing_deg"] == pytest.approx(90.0, abs=0.5)
+    assert mover["proj_lon"] is not None
+    assert mover["proj_lon"] > mover["lon"]  # projected east of the cell
+    # The stationary cell: no projection (no zero-length arrow).
+    still = body["tracks"][1]
+    assert still["track_id"] == 2
+    assert still["proj_lon"] is None and still["proj_lat"] is None
+
+
+def test_api_cells_only_that_frame(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed_frame(config)
+    _seed_cells(config, scan_time="2026-06-20T21:51:07+00:00")
+    client = TestClient(create_app(config))
+    # A different scan_time has no cells.
+    body = client.get(
+        "/api/cells", params={"site": "KFTG", "scan_time": "2026-06-20T22:99:99Z"}
+    )
+    assert body.status_code == 400  # malformed timestamp
+    empty = client.get(
+        "/api/cells", params={"site": "KFTG", "scan_time": "2026-06-20T20:00:00Z"}
+    ).json()
+    assert empty["tracks"] == []
+
+
+def test_api_cells_bad_timestamp_is_400(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed_frame(config)
+    client = TestClient(create_app(config))
+    resp = client.get("/api/cells", params={"site": "KFTG", "scan_time": "not-a-time"})
+    assert resp.status_code == 400
+
+
 def test_latest_frame_none_when_empty(tmp_path: Path) -> None:
     conn = db.connect(tmp_path / "data" / "db.sqlite")
     db.init_db(conn)

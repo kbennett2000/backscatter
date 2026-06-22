@@ -13,6 +13,11 @@ const LS_KEY = "backscatter.location"; // last-selected location, across reloads
 const LS_THEME = "backscatter.theme"; // Slice-21 light/dark pref (migrated → basemap)
 const LS_BASEMAP = "backscatter.basemap"; // chosen map style key, across reloads
 const LS_OPACITY = "backscatter.opacity"; // radar layer opacity, across reloads
+const LS_TRACKS = "backscatter.stormtracks"; // storm-tracks overlay on/off, across reloads
+const TRACKS_SOURCE = "storm-tracks"; // GeoJSON: cell markers + estimated-motion vectors
+const TRACKS_VECTOR_CASING = "storm-vector-casing"; // dark under-line for legibility
+const TRACKS_VECTOR = "storm-vector"; // cyan motion vector
+const TRACKS_CELLS = "storm-cells"; // cyan cell markers
 
 const $ = (id) => document.getElementById(id);
 const readout = $("readout");
@@ -45,6 +50,7 @@ const winToggle = $("wintoggle");
 const windowctl = $("windowctl");
 const opacityInput = $("opacity");
 const basemapSelect = $("basemap");
+const tracksToggle = $("tracks");
 const locpanel = $("locpanel");
 const loclist = $("loclist");
 const locform = $("locform");
@@ -70,6 +76,8 @@ const state = {
   editingId: null, // location id being edited, or null in add mode
   picking: false, // map-click sets the form's lat/lon
   layerReady: false,
+  tracksVisible: localStorage.getItem(LS_TRACKS) === "true", // storm overlay (off by default)
+  tracksReq: 0, // bumped per /api/cells fetch so a stale reply can't paint the wrong frame
   opacity: clampOpacity(localStorage.getItem(LS_OPACITY)), // radar layer opacity
   basemap: resolveInitialBasemap(
     localStorage.getItem(LS_BASEMAP) || localStorage.getItem(LS_THEME),
@@ -302,6 +310,7 @@ async function switchLocation(name) {
 async function init() {
   ensureLocationLayers(); // pins for every configured location, above the radar
   refreshLocationMarkers();
+  ensureTrackLayers(); // storm-tracks overlay (hidden until toggled on)
   updateThemeButton(chromeFor(state.basemap));
   populateBasemapSelect();
   await refreshExtent();
@@ -358,6 +367,8 @@ function reapplyMapLayers() {
     ensureLayer(state.frames[state.index]); // re-add the radar image for the current frame
     setRadarVisible(true);
   }
+  ensureTrackLayers(); // setStyle wiped the overlay source/layers; rebuild + reload
+  refreshTracks();
 }
 
 // A pin per configured location: a circle + a name label. The active location is
@@ -404,6 +415,91 @@ function ensureLocationLayers() {
 function refreshLocationMarkers() {
   const src = state.map.getSource(LOC_SOURCE);
   if (src) src.setData(locationFeatures(state.locations, state.location));
+}
+
+// Storm-cell tracks overlay (Slice 28c). One GeoJSON source feeds a cyan marker per
+// cell + an estimated-motion vector (dark casing under a cyan line for legibility over
+// radar and both basemaps). Cyan sits outside the dBZ palette and the white pins.
+// ESTIMATED motion, framed as such in the UI — not a nowcast.
+const EMPTY_FC = { type: "FeatureCollection", features: [] };
+
+function ensureTrackLayers() {
+  if (state.map.getSource(TRACKS_SOURCE)) return;
+  state.map.addSource(TRACKS_SOURCE, { type: "geojson", data: EMPTY_FC });
+  const vis = state.tracksVisible ? "visible" : "none";
+  state.map.addLayer({
+    id: TRACKS_VECTOR_CASING,
+    type: "line",
+    source: TRACKS_SOURCE,
+    filter: ["==", ["geometry-type"], "LineString"],
+    layout: { "line-join": "round", "line-cap": "round", visibility: vis },
+    paint: {
+      "line-color": "#0b1018",
+      "line-opacity": 0.55,
+      "line-width": ["interpolate", ["linear"], ["zoom"], 5, 4, 10, 6],
+    },
+  });
+  state.map.addLayer({
+    id: TRACKS_VECTOR,
+    type: "line",
+    source: TRACKS_SOURCE,
+    filter: ["==", ["geometry-type"], "LineString"],
+    layout: { "line-join": "round", "line-cap": "round", visibility: vis },
+    paint: {
+      "line-color": "#00e5ff",
+      "line-width": ["interpolate", ["linear"], ["zoom"], 5, 2, 10, 3],
+    },
+  });
+  state.map.addLayer({
+    id: TRACKS_CELLS,
+    type: "circle",
+    source: TRACKS_SOURCE,
+    filter: ["==", ["geometry-type"], "Point"],
+    layout: { visibility: vis },
+    paint: {
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 4, 10, 7],
+      "circle-color": "#00e5ff",
+      "circle-opacity": 0.9,
+      "circle-stroke-color": "#0b1018",
+      "circle-stroke-width": 2,
+    },
+  });
+}
+
+function setTracksVisible(visible) {
+  state.tracksVisible = visible;
+  const vis = visible ? "visible" : "none";
+  for (const id of [TRACKS_VECTOR_CASING, TRACKS_VECTOR, TRACKS_CELLS]) {
+    if (state.map.getLayer(id)) state.map.setLayoutProperty(id, "visibility", vis);
+  }
+  try {
+    localStorage.setItem(LS_TRACKS, visible ? "true" : "false");
+  } catch (e) {
+    /* storage disabled — applies for this session */
+  }
+  refreshTracks();
+}
+
+// Load the current frame's cells into the overlay. Off → clear. A per-fetch token
+// drops a late reply once the user has scrubbed on, so the overlay never shows a
+// different frame's tracks.
+async function refreshTracks() {
+  const src = state.map && state.map.getSource(TRACKS_SOURCE);
+  if (!src) return;
+  const f = state.frames[state.index];
+  if (!state.tracksVisible || !f) {
+    src.setData(EMPTY_FC);
+    return;
+  }
+  const token = ++state.tracksReq;
+  try {
+    const url = `/api/cells?site=${enc(f.site)}&scan_time=${enc(f.scan_time)}`;
+    const data = await fetch(url).then((r) => r.json());
+    if (token !== state.tracksReq) return; // superseded by a newer frame
+    src.setData(trackFeatures(data.tracks || []));
+  } catch (e) {
+    if (token === state.tracksReq) src.setData(EMPTY_FC);
+  }
 }
 
 async function refreshExtent() {
@@ -777,6 +873,7 @@ function goTo(i) {
   readoutFor(state.index);
   updateGapFlag(state.index);
   preloadAround(state.index);
+  refreshTracks(); // overlay moves with the timeline (this frame's cells/motion)
   if (state.index >= state.frames.length - PAGE_FETCH_AHEAD) fetchNextPage();
 }
 
@@ -868,6 +965,9 @@ function wireControls() {
     applyBasemap(nextChromeToggle(state.basemap)),
   );
   basemapSelect.addEventListener("change", () => applyBasemap(basemapSelect.value));
+  // Storm tracks overlay: off by default; toggling fetches the current frame's cells.
+  tracksToggle.checked = state.tracksVisible;
+  tracksToggle.addEventListener("change", () => setTracksVisible(tracksToggle.checked));
   // Radar opacity: live setPaintProperty + persist.
   opacityInput.value = String(state.opacity);
   opacityInput.addEventListener("input", () => {

@@ -318,6 +318,24 @@ def record_cells(
     conn.commit()
 
 
+def cells_for_frame(
+    conn: sqlite3.Connection, *, site: str, scan_time: datetime
+) -> list[sqlite3.Row]:
+    """All stored storm cells for one frame's ``(site, scan_time)``, strongest first.
+
+    Read side of the map overlay (Slice 28c). Returns ``[]`` if there is no cells
+    table yet (serve running against a pre-28a DB), mirroring ``rendered_frames``."""
+    try:
+        return conn.execute(
+            "SELECT centroid_lon, centroid_lat, max_dbz, area_km2, track_id, "
+            "u_ms, v_ms FROM cells WHERE site = ? AND scan_time = ? "
+            "ORDER BY max_dbz DESC",
+            (site, scan_time.isoformat()),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+
 def latest_tracked_cells_before(
     conn: sqlite3.Connection, *, site: str, scan_time: datetime
 ) -> tuple[datetime | None, list[TrackedCell]]:

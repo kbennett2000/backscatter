@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from backscatter.api.frames import (
     DEFAULT_FRAMES_LIMIT,
     MAX_FRAMES_LIMIT,
+    frame_cells,
     frames_extent,
     frames_in_range,
     frames_window,
@@ -270,6 +271,34 @@ def create_app(
         finally:
             conn.close()
         return {"site": resolved_site, "min": mn, "max": mx, "count": count}
+
+    @app.get("/api/cells")
+    def api_cells(
+        scan_time: str,
+        site: str | None = None,
+        location: str | None = None,
+    ) -> dict[str, object]:
+        """Estimated storm-cell tracks for one frame (Slice 28c map overlay).
+
+        Keyed to a frame's ``(site, scan_time)`` so the overlay moves with the
+        timeline: scrubbing to a frame shows that frame's cells + motion. ``site``
+        wins over ``location``; otherwise the default location's site. Returns
+        ``tracks: []`` for a frame with no cells (e.g. clear air). Motion is
+        ESTIMATED, not a nowcast.
+        """
+        scan_dt = _parse_ts(scan_time, "scan_time")
+        assert scan_dt is not None  # required query param → never None (narrows type)
+        conn = _conn()
+        try:
+            resolved_site = _resolve_site(conn, config, site, location)
+            cells = frame_cells(conn, site=resolved_site, scan_time=scan_dt)
+        finally:
+            conn.close()
+        return {
+            "site": resolved_site,
+            "scan_time": scan_dt.isoformat(),
+            "tracks": cells,
+        }
 
     @app.post("/api/backfill", status_code=202)
     def start_backfill(body: BackfillStart) -> dict[str, object]:

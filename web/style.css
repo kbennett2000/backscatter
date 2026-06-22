@@ -412,6 +412,12 @@ body {
   font: inherit;
 }
 
+#displaysettings .setting-note {
+  margin: -2px 0 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
 #timeline {
   position: absolute;
   z-index: 2;

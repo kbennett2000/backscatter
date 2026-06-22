@@ -7,14 +7,24 @@ disk.
 
 from __future__ import annotations
 
+import math
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from backscatter.render.geometry import ground_destination
 from backscatter.store import db
 
 RENDERS_SUBDIR = "renders"
+
+# How far ahead the estimated-motion vector projects a cell, in minutes. The drawn
+# arrow runs from the cell to where its current motion would carry it in this long,
+# so the arrow's length encodes speed. Estimation only — not a nowcast.
+PROJECTION_MINUTES = 30.0
+# Below this ground speed a cell is treated as stationary (new tracks have zero
+# motion until a second frame); no projection endpoint, so no zero-length arrow.
+_MIN_MOTION_MS = 0.5
 
 # How many frames /api/frames returns by default, and the hard ceiling. The
 # timeline window is bounded by "most recent N" rather than handing back an
@@ -111,3 +121,49 @@ def frames_extent(
 ) -> tuple[str | None, str | None, int]:
     """(min scan_time, max scan_time, count) of rendered frames for a site."""
     return db.frames_extent(conn, site=site)
+
+
+def cell_payload(
+    row: sqlite3.Row, *, horizon_min: float = PROJECTION_MINUTES
+) -> dict[str, object]:
+    """Shape one stored cell row for the map overlay (Slice 28c).
+
+    Derives display fields from the stored ground velocity ``(u_ms east, v_ms north)``:
+    speed (km/h) and bearing (deg cw from north, the direction the cell is *heading*),
+    plus a projected endpoint ``horizon_min`` ahead computed with the same tested
+    geodesic the renderer uses (``ground_destination``) — not a flat-earth guess.
+    A near-stationary cell gets ``proj_lon/proj_lat = None`` (no arrow drawn).
+    """
+    u = row["u_ms"] if row["u_ms"] is not None else 0.0
+    v = row["v_ms"] if row["v_ms"] is not None else 0.0
+    lon, lat = row["centroid_lon"], row["centroid_lat"]
+    speed = math.hypot(u, v)
+
+    proj_lon: float | None = None
+    proj_lat: float | None = None
+    bearing: float | None = None
+    if speed >= _MIN_MOTION_MS:
+        bearing = math.degrees(math.atan2(u, v)) % 360.0  # u=east, v=north → cw-N
+        proj_lon, proj_lat = ground_destination(
+            lat, lon, bearing, speed * horizon_min * 60.0
+        )
+
+    return {
+        "track_id": row["track_id"],
+        "lon": lon,
+        "lat": lat,
+        "max_dbz": row["max_dbz"],
+        "area_km2": row["area_km2"],
+        "speed_kmh": round(speed * 3.6, 1),
+        "bearing_deg": round(bearing, 1) if bearing is not None else None,
+        "proj_lon": proj_lon,
+        "proj_lat": proj_lat,
+    }
+
+
+def frame_cells(
+    conn: sqlite3.Connection, *, site: str, scan_time: datetime
+) -> list[dict[str, object]]:
+    """All cells for one frame, shaped for the overlay (strongest dBZ first)."""
+    rows = db.cells_for_frame(conn, site=site, scan_time=scan_time)
+    return [cell_payload(row) for row in rows]

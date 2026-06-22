@@ -432,7 +432,7 @@ dropped. Surface **every** 0.5° surveillance cut (base + SAILS/MRLE) as its own
   dual-source wiring + reconcile-skip; **merge gated on a RadarScope visual check on a live SAILS
   event** (per CLAUDE.md — a rendering change doesn't merge on "it produced frames").
 
-## Storm cell tracking (28a DONE; 28b/28c planned)
+## Storm cell tracking (28a/28b/28c DONE — pending operator's RadarScope visual check)
 RadarScope-style storm tracks. Library survey (TINT/tintX/tobac/Py-ART) concluded none fit
 our streaming, polar-sweep, small-image loop cleanly — each is batch-shaped, wants a grid type
 we don't hold, and is either fragile (TINT: alpha, git-only) or heavy (tintX pins `numpy<2.0`;
@@ -463,9 +463,22 @@ Tracking is *estimation*, framed in-UI as estimated motion, never a nowcast (not
   over the 2024-05-21 Greenfield EF4 supercell → stable ids across 6–7 frames, 44–50 kt toward
   ~30–44° (NE), 55–61 dBZ cores — matches the documented ~45 mph NE storm motion (NWS SCIT family).
   On-map RadarScope visual comparison lands in 28c.
-- **Slice 28c — API + map overlay (planned).** `/cells` endpoint, MapLibre markers +
-  projected-motion line, off-by-default toggle, in-UI estimation disclaimer. **Visual check vs
-  RadarScope** for the same storms.
+- **Slice 28c — API + map overlay (done).** `GET /api/cells?site=&scan_time=` (query params —
+  avoids encoding the `+00:00`; lazy per-frame, doesn't bloat `/api/frames`) → `{site, scan_time,
+  tracks:[{track_id, lon, lat, max_dbz, area_km2, speed_kmh, bearing_deg, proj_lon, proj_lat}]}`.
+  The projected endpoint is computed server-side via the **tested** `geometry.ground_destination`
+  (30-min horizon → arrow length encodes speed); near-stationary cells get `proj_*=None` (no
+  zero-length arrow). New `db.cells_for_frame` read helper + `frames.cell_payload`/`frame_cells`.
+  Frontend: pure `web/stormtracks.js` (`trackFeatures` → GeoJSON Points + LineStrings, node-tested)
+  feeds one MapLibre source + three layers (dark casing + cyan vector + cyan cell markers — cyan is
+  outside the dBZ palette and the white pins; legible over radar/light/dark). Off-by-default
+  `Storm tracks` checkbox in `#displaysettings` (localStorage `backscatter.stormtracks`), re-added
+  on basemap `setStyle` like radar/pins, refreshed on `goTo` with a per-fetch stale-guard so
+  scrubbing never flickers a wrong frame. In-UI disclaimer "Estimated cell motion — not a nowcast,
+  not for life safety". **The mandatory visual-vs-RadarScope check happens on deploy (operator's
+  phone)** — markers on the right cells, vectors pointing the right way at sensible length, sane
+  while scrubbing. Tests: `tests/test_api.py` (endpoint returns the frame's cells, projection for a
+  mover / None for a stationary cell, 400 on bad timestamp) + `web/stormtracks.test.js`.
 
 ## Later (not scheduled yet)
 - Velocity and dual-pol products; product switcher
