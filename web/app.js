@@ -14,6 +14,9 @@ const LS_THEME = "backscatter.theme"; // Slice-21 light/dark pref (migrated → 
 const LS_BASEMAP = "backscatter.basemap"; // chosen map style key, across reloads
 const LS_OPACITY = "backscatter.opacity"; // radar layer opacity, across reloads
 const LS_TRACKS = "backscatter.stormtracks"; // storm-tracks overlay on/off, across reloads
+const LS_CLEARAIR = "backscatter.clearair"; // hide low-dBZ clear-air returns, across reloads
+const LS_PALETTE = "backscatter.palette"; // reflectivity palette key, across reloads
+const RECOLOR_CACHE_MAX = 60; // bounded LRU of recolored object URLs (revoked on evict)
 const TRACKS_SOURCE = "storm-tracks"; // GeoJSON: cell markers + estimated-motion vectors
 const TRACKS_VECTOR_CASING = "storm-vector-casing"; // dark under-line for legibility
 const TRACKS_VECTOR = "storm-vector"; // cyan motion vector
@@ -51,6 +54,7 @@ const windowctl = $("windowctl");
 const opacityInput = $("opacity");
 const basemapSelect = $("basemap");
 const tracksToggle = $("tracks");
+const clearAirToggle = $("clearair");
 const locpanel = $("locpanel");
 const loclist = $("loclist");
 const locform = $("locform");
@@ -78,6 +82,10 @@ const state = {
   layerReady: false,
   tracksVisible: localStorage.getItem(LS_TRACKS) === "true", // storm overlay (off by default)
   tracksReq: 0, // bumped per /api/cells fetch so a stale reply can't paint the wrong frame
+  clearAir: localStorage.getItem(LS_CLEARAIR) === "true", // hide low-dBZ speckle (off by default)
+  palette: localStorage.getItem(LS_PALETTE) || "nws", // reflectivity palette (NWS default)
+  recolorCache: new Map(), // `${url}|${palette}|${clearAir}` → object URL of recolored PNG
+  recolorGen: 0, // bumped when a recolor toggle changes, so stale async paints are dropped
   opacity: clampOpacity(localStorage.getItem(LS_OPACITY)), // radar layer opacity
   basemap: resolveInitialBasemap(
     localStorage.getItem(LS_BASEMAP) || localStorage.getItem(LS_THEME),
@@ -864,10 +872,7 @@ function goTo(i) {
   if (state.frames.length === 0) return;
   state.index = Math.max(0, Math.min(i, state.frames.length - 1));
   const f = state.frames[state.index];
-  state.map.getSource(RADAR_SOURCE).updateImage({
-    url: f.image_url,
-    coordinates: cornersFromBounds(f.bounds), // per-frame (failover-safe)
-  });
+  displayFrame(f);
   scrubber.value = String(state.index);
   frametime.textContent = fmtLocalTime(f.scan_time);
   readoutFor(state.index);
@@ -875,6 +880,124 @@ function goTo(i) {
   preloadAround(state.index);
   refreshTracks(); // overlay moves with the timeline (this frame's cells/motion)
   if (state.index >= state.frames.length - PAGE_FETCH_AHEAD) fetchNextPage();
+}
+
+// --- client-side recolor (Slice 24) ----------------------------------------
+// The default path is byte-identical to before: with no recolor active we hand the
+// stored PNG straight to MapLibre. Otherwise we recolor a same-origin canvas copy
+// (invert each pixel to its dBZ bucket, hide clear-air and/or remap palette) and feed
+// the result in as an object URL. The stored PNG is never written.
+
+const RECOLOR_LUT = buildLut(SOURCE_BUCKETS); // RGB → bucket index, built once
+
+function recolorActive() {
+  return state.clearAir || state.palette !== "nws";
+}
+
+function recolorKey(f) {
+  return `${f.image_url}|${state.palette}|${state.clearAir ? 1 : 0}`;
+}
+
+function setRadarImage(f, url) {
+  state.map.getSource(RADAR_SOURCE).updateImage({
+    url,
+    coordinates: cornersFromBounds(f.bounds), // per-frame (failover-safe)
+  });
+}
+
+function displayFrame(f) {
+  if (!recolorActive()) {
+    setRadarImage(f, f.image_url); // unchanged default
+    return;
+  }
+  const key = recolorKey(f);
+  const cached = state.recolorCache.get(key);
+  if (cached) {
+    state.recolorCache.delete(key); // refresh LRU position
+    state.recolorCache.set(key, cached);
+    setRadarImage(f, cached);
+    return;
+  }
+  buildRecolored(f, key, state.recolorGen);
+}
+
+// Recolor `f` off-screen and, if still relevant, paint it. Caches the object URL.
+async function buildRecolored(f, key, gen) {
+  try {
+    const url = await recolorToUrl(f.image_url, key);
+    // Drop stale results: a toggle changed, or we've moved to another frame.
+    if (gen !== state.recolorGen) return;
+    if (state.frames[state.index] !== f) return;
+    setRadarImage(f, url);
+  } catch (e) {
+    // Recolor failed (decode/canvas) — fall back to the original so the frame still shows.
+    if (gen === state.recolorGen && state.frames[state.index] === f) {
+      setRadarImage(f, f.image_url);
+    }
+  }
+}
+
+// Decode the PNG, recolor its pixels, and return a cached object URL. Same-origin, so
+// the canvas is not tainted and getImageData works.
+function recolorToUrl(imageUrl, key) {
+  const existing = state.recolorCache.get(key);
+  if (existing) return Promise.resolve(existing);
+  return loadImage(imageUrl).then(
+    (img) =>
+      new Promise((resolve, reject) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0);
+        const id = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const out = recolorRGBA(id.data, {
+          lut: RECOLOR_LUT,
+          target: PALETTES[state.palette] || PALETTES.nws,
+          hideMaxBucket: state.clearAir ? CLEAR_AIR_MAX_BUCKET : -1,
+        });
+        ctx.putImageData(new ImageData(out, canvas.width, canvas.height), 0, 0);
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            reject(new Error("toBlob failed"));
+            return;
+          }
+          const url = URL.createObjectURL(blob);
+          cacheRecolored(key, url);
+          resolve(url);
+        });
+      }),
+  );
+}
+
+function loadImage(url) {
+  // Reuse a warmed Image if it's already decoded; otherwise load fresh.
+  const warm = state.preloaded.get(url);
+  if (warm && warm.complete && warm.naturalWidth > 0) return Promise.resolve(warm);
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+function cacheRecolored(key, url) {
+  state.recolorCache.set(key, url);
+  while (state.recolorCache.size > RECOLOR_CACHE_MAX) {
+    const oldest = state.recolorCache.keys().next().value;
+    const stale = state.recolorCache.get(oldest);
+    state.recolorCache.delete(oldest);
+    if (stale) URL.revokeObjectURL(stale); // free the blob
+  }
+}
+
+// A recolor toggle changed: invalidate in-flight async paints, then re-show the frame.
+// We keep the cache (its keys already encode palette + clear-air), so flipping back is
+// instant.
+function applyRecolorChange() {
+  state.recolorGen++;
+  if (state.frames.length > 0) displayFrame(state.frames[state.index]);
 }
 
 // Mark each missing-data span on the scrubber track. Markers are %-based, so they
@@ -920,6 +1043,11 @@ function preloadAround(i) {
       const img = new Image();
       img.src = f.image_url;
       state.preloaded.set(f.image_url, img);
+    }
+    // When recoloring, warm the recolored look-ahead too so playback doesn't jank.
+    if (recolorActive()) {
+      const key = recolorKey(f);
+      if (!state.recolorCache.has(key)) recolorToUrl(f.image_url, key).catch(() => {});
     }
   }
 }
@@ -968,6 +1096,17 @@ function wireControls() {
   // Storm tracks overlay: off by default; toggling fetches the current frame's cells.
   tracksToggle.checked = state.tracksVisible;
   tracksToggle.addEventListener("change", () => setTracksVisible(tracksToggle.checked));
+  // Clear-air hide: client-side recolor drops the low-dBZ speckle; persist + re-show.
+  clearAirToggle.checked = state.clearAir;
+  clearAirToggle.addEventListener("change", () => {
+    state.clearAir = clearAirToggle.checked;
+    try {
+      localStorage.setItem(LS_CLEARAIR, state.clearAir ? "true" : "false");
+    } catch (e) {
+      /* storage disabled — applies for this session */
+    }
+    applyRecolorChange();
+  });
   // Radar opacity: live setPaintProperty + persist.
   opacityInput.value = String(state.opacity);
   opacityInput.addEventListener("input", () => {

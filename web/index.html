@@ -93,6 +93,11 @@
           <input id="opacity" type="range" min="0.1" max="1" step="0.05"
         /></label>
         <label class="setting"
+          ><span>Hide clear-air</span>
+          <input id="clearair" type="checkbox"
+            aria-label="Hide low-dBZ clear-air returns (bugs, dust, gradients)"
+        /></label>
+        <label class="setting"
           ><span>Storm tracks</span>
           <input id="tracks" type="checkbox"
             aria-label="Show estimated storm-cell markers and motion vectors"
@@ -130,6 +135,7 @@
     <script src="/static/timefmt.js"></script>
     <script src="/static/prefs.js"></script>
     <script src="/static/stormtracks.js"></script>
+    <script src="/static/recolor.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>
